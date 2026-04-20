@@ -1,4 +1,3 @@
-#RequireAdmin
 #AutoIt3Wrapper_UseX64=y
 
 ; ============================================
@@ -13,10 +12,17 @@ If $PID = 0 Then
 	Exit
 EndIf
 
+MsgBox(64, "Debug", "Found PID: " & $PID & @CRLF & "AutoIt x64: " & @AutoItX64 & @CRLF & "Running as admin: " & IsAdmin())
+
 Local $hK32 = DllOpen("kernel32.dll")
-Local $aOpen = DllCall($hK32, "handle", "OpenProcess", "dword", 0x1F0FFF, "bool", 0, "dword", $PID)
+Local $aOpen = DllCall($hK32, "handle", "OpenProcess", "dword", 0x0410, "bool", 0, "dword", $PID)
+If @error Then
+	MsgBox(16, "Error", "DllCall failed with @error=" & @error & @CRLF & "Make sure you run with AutoIt3_x64.exe")
+	Exit
+EndIf
 If $aOpen[0] = 0 Then
-	MsgBox(16, "Error", "Failed to open process. Run as Administrator.")
+	Local $lastErr = DllCall("kernel32.dll", "dword", "GetLastError")
+	MsgBox(16, "Error", "OpenProcess failed." & @CRLF & "GetLastError: " & $lastErr[0] & @CRLF & @CRLF & "Try: run AutoIt3_x64.exe as Administrator")
 	Exit
 EndIf
 Local $hProc = $aOpen[0]

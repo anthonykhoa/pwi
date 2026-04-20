@@ -4,30 +4,26 @@
 ; ============================================
 ; PWI 64-bit Offset Finder
 ; ============================================
-; Finds the new pointer chain offsets for the
-; 64-bit client by working backwards from the
-; character name in memory.
-; ============================================
 
 ; Step 1: Find the process
-Local $PID = ProcessExists("elementclient_64.exe")
+Dim $PID = ProcessExists("elementclient_64.exe")
 If $PID = 0 Then
     MsgBox(16, "Error", "elementclient_64.exe is not running!" & @CRLF & "Log into a character first.")
     Exit
 EndIf
 
 ; Step 2: Open process
-Local $hK32 = DllOpen("kernel32.dll")
-Local $aOpen = DllCall($hK32, "handle", "OpenProcess", "dword", 0x1F0FFF, "bool", 0, "dword", $PID)
+Dim $hK32 = DllOpen("kernel32.dll")
+Dim $aOpen = DllCall($hK32, "handle", "OpenProcess", "dword", 0x1F0FFF, "bool", 0, "dword", $PID)
 If $aOpen[0] = 0 Then
     MsgBox(16, "Error", "Failed to open process. Run as Administrator.")
     DllClose($hK32)
     Exit
 EndIf
-Local $hProc = $aOpen[0]
+Dim $hProc = $aOpen[0]
 
 ; Step 3: Get character name
-Local $charName = InputBox("Character Name", "Type your character name EXACTLY (case-sensitive):", "", "", 400, 200)
+Dim $charName = InputBox("Character Name", "Type your character name EXACTLY (case-sensitive):", "", "", 400, 200)
 If $charName = "" Then Exit
 
 ; Progress window
@@ -38,40 +34,47 @@ Global $lblTimer = GUICtrlCreateLabel("", 20, 75, 460, 25)
 Global $lblResults = GUICtrlCreateLabel("", 20, 105, 460, 80)
 GUISetState(@SW_SHOW, $hGUI)
 Global $gStart = TimerInit()
+Global $gLastUpdate = 0
+
+; Shared variables for loops
+Dim $ret, $rBase, $rSize, $rState, $rProtect, $rType
+Dim $chunkSize, $readSize, $data, $dataStr, $pos, $found, $foundAddr
+Dim $rdSz, $chunk, $val, $ptrAddr, $bp, $off, $offset
+Dim $addr, $regionCount, $mbi
 
 ; ==========================================
 ; PHASE 1: Find character name in memory
 ; ==========================================
 _Status("Phase 1: Searching for '" & $charName & "' in memory...")
 
-Local $nameAddresses[0]
-Local $addr = 0
-Local $mbi = DllStructCreate("ptr BaseAddress; ptr AllocationBase; dword AllocationProtect; ptr RegionSize; dword State; dword Protect; dword Type")
-Local $regionCount = 0
+Dim $nameAddresses[0]
+$addr = 0
+$mbi = DllStructCreate("ptr BaseAddress; ptr AllocationBase; dword AllocationProtect; ptr RegionSize; dword State; dword Protect; dword Type")
+$regionCount = 0
 
 While 1
-    Local $ret = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $hProc, "ptr", $addr, "ptr", DllStructGetPtr($mbi), "ulong_ptr", DllStructGetSize($mbi))
+    $ret = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $hProc, "ptr", $addr, "ptr", DllStructGetPtr($mbi), "ulong_ptr", DllStructGetSize($mbi))
     If @error Or $ret[0] = 0 Then ExitLoop
 
-    Local $rBase = DllStructGetData($mbi, "BaseAddress")
-    Local $rSize = DllStructGetData($mbi, "RegionSize")
-    Local $rState = DllStructGetData($mbi, "State")
-    Local $rProtect = DllStructGetData($mbi, "Protect")
+    $rBase = DllStructGetData($mbi, "BaseAddress")
+    $rSize = DllStructGetData($mbi, "RegionSize")
+    $rState = DllStructGetData($mbi, "State")
+    $rProtect = DllStructGetData($mbi, "Protect")
 
     If $rState = 0x1000 And BitAND($rProtect, 0x100) = 0 And $rSize < 0x10000000 Then
-        Local $chunkSize = 65536
+        $chunkSize = 65536
         If $rSize < $chunkSize Then $chunkSize = $rSize
         For $offset = 0 To $rSize - 2 Step $chunkSize
-            Local $readSize = $chunkSize
+            $readSize = $chunkSize
             If $offset + $readSize > $rSize Then $readSize = $rSize - $offset
-            Local $data = _ReadBytes($hProc, $hK32, $rBase + $offset, $readSize)
+            $data = _ReadBytes($hProc, $hK32, $rBase + $offset, $readSize)
             If @error Then ContinueLoop
-            Local $dataStr = BinaryToString($data, 2)
-            Local $pos = 1
+            $dataStr = BinaryToString($data, 2)
+            $pos = 1
             While 1
-                Local $found = StringInStr($dataStr, $charName, 1, 1, $pos)
+                $found = StringInStr($dataStr, $charName, 1, 1, $pos)
                 If $found = 0 Then ExitLoop
-                Local $foundAddr = $rBase + $offset + ($found - 1) * 2
+                $foundAddr = $rBase + $offset + ($found - 1) * 2
                 ReDim $nameAddresses[UBound($nameAddresses) + 1]
                 $nameAddresses[UBound($nameAddresses) - 1] = $foundAddr
                 $pos = $found + 1
@@ -96,14 +99,10 @@ _Status("Phase 1 done: Found " & UBound($nameAddresses) & " name matches.")
 
 ; ==========================================
 ; PHASE 2: Find what points to each name address
-; (looking for the name POINTER in the player object)
 ; ==========================================
 _Status("Phase 2: Finding pointers to name strings...")
 
-Local $namePointers[0][2] ; [n][0] = pointer location, [n][1] = name address it points to
-
-; Build list of name addresses to search for
-; Scan all memory for dwords/ptrs that match any of our name addresses
+Dim $namePointers[0][2]
 $addr = 0
 $regionCount = 0
 
@@ -117,22 +116,22 @@ While 1
     $rProtect = DllStructGetData($mbi, "Protect")
 
     If $rState = 0x1000 And BitAND($rProtect, 0x100) = 0 And $rSize < 0x10000000 Then
-        Local $chunkSz = 65536
-        If $rSize < $chunkSz Then $chunkSz = $rSize
-        For $off = 0 To $rSize - 4 Step $chunkSz
-            Local $rdSz = $chunkSz
+        $chunkSize = 65536
+        If $rSize < $chunkSize Then $chunkSize = $rSize
+        For $off = 0 To $rSize - 4 Step $chunkSize
+            $rdSz = $chunkSize
             If $off + $rdSz > $rSize Then $rdSz = $rSize - $off
             If $rdSz < 4 Then ContinueLoop
-            Local $chunk = _ReadBytes($hProc, $hK32, $rBase + $off, $rdSz)
+            $chunk = _ReadBytes($hProc, $hK32, $rBase + $off, $rdSz)
             If @error Then ContinueLoop
 
             For $bp = 0 To $rdSz - 4 Step 4
-                Local $val = _BytesToDword($chunk, $bp)
+                $val = _BytesToDword($chunk, $bp)
                 If $val < 0x10000 Then ContinueLoop
 
                 For $n = 0 To UBound($nameAddresses) - 1
                     If $val = $nameAddresses[$n] Then
-                        Local $ptrAddr = $rBase + $off + $bp
+                        $ptrAddr = $rBase + $off + $bp
                         ReDim $namePointers[UBound($namePointers, 1) + 1][2]
                         $namePointers[UBound($namePointers, 1) - 1][0] = $ptrAddr
                         $namePointers[UBound($namePointers, 1) - 1][1] = $val
@@ -159,54 +158,25 @@ If UBound($namePointers, 1) = 0 Then
 EndIf
 
 ; ==========================================
-; PHASE 3: For each name pointer, figure out
-; the offset from the player object base.
-; The name pointer is at playerBase + NAME_OFFSET.
-; We find NAME_OFFSET by checking what other
-; recognizable data is near the pointer.
+; PHASE 3: Find player object + NAME_OFFSET
 ; ==========================================
 _Status("Phase 3: Analyzing player object structure...")
 
-Local $output = ""
-Local $validCount = 0
+Dim $output = ""
+Dim $validCount = 0
+Dim $namePtrAddr, $tryPlayerBase, $nameCheck, $possibleID, $idOffset, $idVal, $tryOffset
 
 For $i = 0 To UBound($namePointers, 1) - 1
-    Local $namePtrAddr = $namePointers[$i][0]
-
-    ; Try various offsets for where the name pointer might be in the player struct
-    ; Read a wide area around the name pointer to look for patterns
-    ; The old name offset was 0xB90 (2960), so the player base would be namePtrAddr - 0xB90
-    ; But we don't know the new offset, so try a range
-
-    ; Read 16KB around the name pointer location to find the player object boundary
-    Local $scanStart = $namePtrAddr - 0x2000 ; 8KB before
-    Local $scanSize = 0x4000 ; 16KB total
-    Local $areaData = _ReadBytes($hProc, $hK32, $scanStart, $scanSize)
-    If @error Then ContinueLoop
-
-    ; For each possible name offset (0 to 8192 in steps of 4),
-    ; assume playerBase = namePtrAddr - offset
-    ; Then check if playerBase + some_other_offset has a valid player ID (non-zero dword)
-    ; Also try to verify by reading the name back through the pointer
+    $namePtrAddr = $namePointers[$i][0]
 
     For $tryOffset = 0 To 0x1800 Step 4
-        Local $tryPlayerBase = $namePtrAddr - $tryOffset
-
-        ; Quick validation: read a few things from this candidate player base
-        ; Check for player ID somewhere in the first 0x1000 bytes
-        ; A valid player object should have some non-zero dwords at consistent offsets
-
-        ; Try reading name through this offset to verify
-        Local $nameCheck = _ReadDword($hProc, $hK32, $tryPlayerBase + $tryOffset)
+        $tryPlayerBase = $namePtrAddr - $tryOffset
+        $nameCheck = _ReadDword($hProc, $hK32, $tryPlayerBase + $tryOffset)
         If $nameCheck = $namePointers[$i][1] Then
-            ; This confirms the name pointer is at tryPlayerBase + tryOffset
-            ; Now look for what points to tryPlayerBase (the level above in the chain)
-
-            ; Check for a player ID - try common ID offsets around the old 0x808
-            Local $possibleID = 0
-            Local $idOffset = 0
+            $possibleID = 0
+            $idOffset = 0
             For $tryID = 0x700 To 0x1000 Step 4
-                Local $idVal = _ReadDword($hProc, $hK32, $tryPlayerBase + $tryID)
+                $idVal = _ReadDword($hProc, $hK32, $tryPlayerBase + $tryID)
                 If $idVal > 1000 And $idVal < 100000000 Then
                     $possibleID = $idVal
                     $idOffset = $tryID
@@ -225,7 +195,7 @@ For $i = 0 To UBound($namePointers, 1) - 1
             $output &= @CRLF
 
             If $validCount >= 20 Then ExitLoop 2
-            ExitLoop ; Found it for this pointer, move to next
+            ExitLoop
         EndIf
     Next
 
@@ -233,17 +203,17 @@ For $i = 0 To UBound($namePointers, 1) - 1
 Next
 
 ; ==========================================
-; PHASE 4: For each player object, scan for
-; pointers to it and trace up the chain to
-; find PLAYER_OFFSET, level2 offset, and ADDRESS_BASE
+; PHASE 4: Trace chain upwards to find ADDRESS_BASE
 ; ==========================================
-Local $playerAddrs[0]
-Local $playerNameOffsets[0]
+Dim $playerAddrs[0]
+Dim $playerNameOffsets[0]
+Dim $npa, $tpb, $nc
+
 For $z = 0 To UBound($namePointers, 1) - 1
-    Local $npa = $namePointers[$z][0]
+    $npa = $namePointers[$z][0]
     For $tryOff = 0 To 0x1800 Step 4
-        Local $tpb = $npa - $tryOff
-        Local $nc = _ReadDword($hProc, $hK32, $tpb + $tryOff)
+        $tpb = $npa - $tryOff
+        $nc = _ReadDword($hProc, $hK32, $tpb + $tryOff)
         If $nc = $namePointers[$z][1] Then
             ReDim $playerAddrs[UBound($playerAddrs) + 1]
             $playerAddrs[UBound($playerAddrs) - 1] = $tpb
@@ -258,7 +228,7 @@ Next
 If UBound($playerAddrs) = 0 And $validCount = 0 Then
     GUIDelete($hGUI)
     MsgBox(48, "No Results", "Could not identify player objects." & @CRLF & "Raw data copied to clipboard - share with Claude.")
-    Local $rawOut = "Name addresses:" & @CRLF & _FormatAddrs($nameAddresses) & @CRLF
+    Dim $rawOut = "Name addresses:" & @CRLF & _FormatAddrs($nameAddresses) & @CRLF
     $rawOut &= "Name pointer locations:" & @CRLF
     For $i = 0 To UBound($namePointers, 1) - 1
         $rawOut &= "  0x" & Hex($namePointers[$i][0]) & " -> 0x" & Hex($namePointers[$i][1]) & @CRLF
@@ -271,16 +241,21 @@ EndIf
 
 _Status("Phase 4: Finding pointers to player objects...")
 
-Local $chainResults = ""
-Local $chainCount = 0
+Dim $chainResults = ""
+Dim $chainCount = 0
+Dim $pAddr, $pNameOff, $ptrToPlayer, $playerPtrLoc
+Dim $listBase, $level1Val, $scanAddr
+Dim $sBase, $sSize, $sState, $sProtect, $sType
+Dim $candidateBase, $vName
+Dim $mbi2 = DllStructCreate("ptr BaseAddress; ptr AllocationBase; dword AllocationProtect; ptr RegionSize; dword State; dword Protect; dword Type")
 
 For $pi = 0 To UBound($playerAddrs) - 1
-    Local $pAddr = $playerAddrs[$pi]
-    Local $pNameOff = $playerNameOffsets[$pi]
+    $pAddr = $playerAddrs[$pi]
+    $pNameOff = $playerNameOffsets[$pi]
     _Status("Phase 4: Tracing chain for player " & ($pi + 1) & "/" & UBound($playerAddrs) & "...")
 
-    ; Scan all memory for dwords equal to pAddr (pointers to the player)
-    Local $ptrToPlayer[0]
+    ; Scan all memory for dwords equal to pAddr
+    Dim $ptrToPlayer[0]
     $addr = 0
     While 1
         $ret = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $hProc, "ptr", $addr, "ptr", DllStructGetPtr($mbi), "ulong_ptr", DllStructGetSize($mbi))
@@ -290,18 +265,18 @@ For $pi = 0 To UBound($playerAddrs) - 1
         $rState = DllStructGetData($mbi, "State")
         $rProtect = DllStructGetData($mbi, "Protect")
         If $rState = 0x1000 And BitAND($rProtect, 0x100) = 0 And $rSize < 0x10000000 Then
-            Local $cSz4 = 65536
-            If $rSize < $cSz4 Then $cSz4 = $rSize
-            For $o4 = 0 To $rSize - 4 Step $cSz4
-                Local $rS4 = $cSz4
-                If $o4 + $rS4 > $rSize Then $rS4 = $rSize - $o4
-                If $rS4 < 4 Then ContinueLoop
-                Local $c4 = _ReadBytes($hProc, $hK32, $rBase + $o4, $rS4)
+            $chunkSize = 65536
+            If $rSize < $chunkSize Then $chunkSize = $rSize
+            For $off = 0 To $rSize - 4 Step $chunkSize
+                $rdSz = $chunkSize
+                If $off + $rdSz > $rSize Then $rdSz = $rSize - $off
+                If $rdSz < 4 Then ContinueLoop
+                $chunk = _ReadBytes($hProc, $hK32, $rBase + $off, $rdSz)
                 If @error Then ContinueLoop
-                For $b4 = 0 To $rS4 - 4 Step 4
-                    If _BytesToDword($c4, $b4) = $pAddr Then
+                For $bp = 0 To $rdSz - 4 Step 4
+                    If _BytesToDword($chunk, $bp) = $pAddr Then
                         ReDim $ptrToPlayer[UBound($ptrToPlayer) + 1]
-                        $ptrToPlayer[UBound($ptrToPlayer) - 1] = $rBase + $o4 + $b4
+                        $ptrToPlayer[UBound($ptrToPlayer) - 1] = $rBase + $off + $bp
                         If UBound($ptrToPlayer) >= 30 Then ExitLoop 3
                     EndIf
                 Next
@@ -314,56 +289,40 @@ For $pi = 0 To UBound($playerAddrs) - 1
 
     If UBound($ptrToPlayer) = 0 Then ContinueLoop
 
-    ; For each pointer to player, the PLAYER_OFFSET = ptrLocation - listBase
-    ; We try each pointer location and see if we can trace further up
     For $pp = 0 To UBound($ptrToPlayer) - 1
-        Local $playerPtrLoc = $ptrToPlayer[$pp]
+        $playerPtrLoc = $ptrToPlayer[$pp]
         _TickProgress("Phase 4b: Testing player ptr " & ($pp + 1) & "/" & UBound($ptrToPlayer), "Trying offset combinations...")
 
-        ; Try different PLAYER_OFFSETs (0x00 to 0x200)
         For $tryPO = 0 To 0x200 Step 4
-            Local $listBase = $playerPtrLoc - $tryPO
+            $listBase = $playerPtrLoc - $tryPO
 
-            ; Now scan for pointers to listBase (level 2)
-            ; But that's another full scan - too slow for all combos
-            ; Instead, for each tryPO, scan for what points to listBase
-            ; Only do this for small number of candidates
-
-            ; Quick check: is there something at listBase - some_offset that looks like a valid pointer?
-            ; The old chain was: [BASE] -> val, val+0x1C -> listBase
-            ; So we need to find val where val + someOffset = listBase
-            ; Try offsets 0x00 to 0x100
             For $tryL2Off = 0 To 0x100 Step 4
-                Local $level1Val = $listBase - $tryL2Off
-                _TickProgress("Phase 4c: PlayerOff=0x" & Hex($tryPO) & " L2Off=0x" & Hex($tryL2Off), "Scanning exe/dll for base address...")
+                $level1Val = $listBase - $tryL2Off
+                _TickProgress("Phase 4c: PO=0x" & Hex($tryPO) & " L2=0x" & Hex($tryL2Off), "Scanning exe/dll for base...")
 
-                ; Now find ADDRESS_BASE: scan image memory for dword = level1Val
-                ; Only scan exe/dll sections (MEM_IMAGE) for the static base
-                Local $scanAddr = 0
-                Local $mbi2 = DllStructCreate("ptr BaseAddress; ptr AllocationBase; dword AllocationProtect; ptr RegionSize; dword State; dword Protect; dword Type")
+                $scanAddr = 0
                 While 1
-                    Local $ret2 = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $hProc, "ptr", $scanAddr, "ptr", DllStructGetPtr($mbi2), "ulong_ptr", DllStructGetSize($mbi2))
-                    If @error Or $ret2[0] = 0 Then ExitLoop
-                    Local $sBase = DllStructGetData($mbi2, "BaseAddress")
-                    Local $sSize = DllStructGetData($mbi2, "RegionSize")
-                    Local $sState = DllStructGetData($mbi2, "State")
-                    Local $sProtect = DllStructGetData($mbi2, "Protect")
-                    Local $sType = DllStructGetData($mbi2, "Type")
+                    $ret = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $hProc, "ptr", $scanAddr, "ptr", DllStructGetPtr($mbi2), "ulong_ptr", DllStructGetSize($mbi2))
+                    If @error Or $ret[0] = 0 Then ExitLoop
+                    $sBase = DllStructGetData($mbi2, "BaseAddress")
+                    $sSize = DllStructGetData($mbi2, "RegionSize")
+                    $sState = DllStructGetData($mbi2, "State")
+                    $sProtect = DllStructGetData($mbi2, "Protect")
+                    $sType = DllStructGetData($mbi2, "Type")
 
                     If $sState = 0x1000 And BitAND($sProtect, 0x100) = 0 And $sType = 0x1000000 Then
-                        Local $cSz5 = 65536
-                        If $sSize < $cSz5 Then $cSz5 = $sSize
-                        For $o5 = 0 To $sSize - 4 Step $cSz5
-                            Local $rS5 = $cSz5
-                            If $o5 + $rS5 > $sSize Then $rS5 = $sSize - $o5
-                            If $rS5 < 4 Then ContinueLoop
-                            Local $c5 = _ReadBytes($hProc, $hK32, $sBase + $o5, $rS5)
+                        $chunkSize = 65536
+                        If $sSize < $chunkSize Then $chunkSize = $sSize
+                        For $off = 0 To $sSize - 4 Step $chunkSize
+                            $rdSz = $chunkSize
+                            If $off + $rdSz > $sSize Then $rdSz = $sSize - $off
+                            If $rdSz < 4 Then ContinueLoop
+                            $chunk = _ReadBytes($hProc, $hK32, $sBase + $off, $rdSz)
                             If @error Then ContinueLoop
-                            For $b5 = 0 To $rS5 - 4 Step 4
-                                If _BytesToDword($c5, $b5) = $level1Val Then
-                                    Local $candidateBase = $sBase + $o5 + $b5
-                                    ; VERIFY: read the full chain with these offsets
-                                    Local $vName = _TryReadNameWithOffsets($hProc, $hK32, $candidateBase, $tryL2Off, $tryPO, $pNameOff)
+                            For $bp = 0 To $rdSz - 4 Step 4
+                                If _BytesToDword($chunk, $bp) = $level1Val Then
+                                    $candidateBase = $sBase + $off + $bp
+                                    $vName = _TryReadNameWithOffsets($hProc, $hK32, $candidateBase, $tryL2Off, $tryPO, $pNameOff)
                                     If $vName = $charName Then
                                         $chainCount += 1
                                         $chainResults &= "=== FOUND COMPLETE CHAIN " & $chainCount & " ===" & @CRLF
@@ -373,7 +332,7 @@ For $pi = 0 To UBound($playerAddrs) - 1
                                         $chainResults &= "PLAYERNAME_OFFSET = " & $pNameOff & "  (0x" & Hex($pNameOff) & ")  [old: 0xB90]" & @CRLF
                                         $chainResults &= "Character: " & $vName & @CRLF
                                         $chainResults &= @CRLF
-                                        GUICtrlSetData($lblResults, "FOUND! Base=0x" & Hex($candidateBase) & " Offsets=" & $tryL2Off & "/" & $tryPO & "/" & $pNameOff)
+                                        GUICtrlSetData($lblResults, "FOUND! Base=0x" & Hex($candidateBase))
                                     EndIf
                                 EndIf
                             Next
@@ -401,16 +360,16 @@ If $chainCount > 0 Then
     MsgBox(64, "SUCCESS! Found ADDRESS_BASE + offsets!", "Complete pointer chain found!" & @CRLF & @CRLF & $chainResults & @CRLF & "Results copied to clipboard - paste to Claude!")
     ClipPut($chainResults)
 ElseIf $validCount > 0 Then
-    MsgBox(48, "Partial Results", "Found player objects but couldn't trace full chain." & @CRLF & @CRLF & $output & @CRLF & "Results copied to clipboard - paste to Claude!")
+    MsgBox(48, "Partial Results", "Found player objects but couldn't trace full chain." & @CRLF & @CRLF & StringLeft($output, 1500) & @CRLF & "Results copied to clipboard - paste to Claude!")
     ClipPut($output)
 Else
     MsgBox(48, "No Results", "Could not identify player object structure." & @CRLF & @CRLF & "Found " & UBound($nameAddresses) & " name strings and " & UBound($namePointers, 1) & " name pointers." & @CRLF & @CRLF & "Raw data copied to clipboard - share with Claude.")
-    Local $rawOut = "Name addresses:" & @CRLF & _FormatAddrs($nameAddresses) & @CRLF
-    $rawOut &= "Name pointer locations:" & @CRLF
+    Dim $rawOut2 = "Name addresses:" & @CRLF & _FormatAddrs($nameAddresses) & @CRLF
+    $rawOut2 &= "Name pointer locations:" & @CRLF
     For $i = 0 To UBound($namePointers, 1) - 1
-        $rawOut &= "  0x" & Hex($namePointers[$i][0]) & " -> 0x" & Hex($namePointers[$i][1]) & @CRLF
+        $rawOut2 &= "  0x" & Hex($namePointers[$i][0]) & " -> 0x" & Hex($namePointers[$i][1]) & @CRLF
     Next
-    ClipPut($rawOut)
+    ClipPut($rawOut2)
 EndIf
 
 DllCall($hK32, "bool", "CloseHandle", "handle", $hProc)
@@ -420,11 +379,10 @@ DllClose($hK32)
 ; HELPER FUNCTIONS
 ; ============================================
 
-Global $gLastUpdate = 0
 Func _Status($msg, $detail = "")
     GUICtrlSetData($lblStatus, $msg)
     If $detail <> "" Then GUICtrlSetData($lblDetail, $detail)
-    Local $el = Round(TimerDiff($gStart) / 1000)
+    Dim $el = Round(TimerDiff($gStart) / 1000)
     GUICtrlSetData($lblTimer, "Elapsed: " & $el & "s")
     $gLastUpdate = TimerInit()
 EndFunc
@@ -434,43 +392,43 @@ Func _TickProgress($msg, $detail = "")
 EndFunc
 
 Func _ReadDword($hP, $hK, $iA)
-    Local $buf = DllStructCreate("dword")
+    Dim $buf = DllStructCreate("dword")
     DllCall($hK, "bool", "ReadProcessMemory", "handle", $hP, "ptr", $iA, "ptr", DllStructGetPtr($buf), "ulong_ptr", 4, "ulong_ptr*", 0)
     If @error Then Return SetError(1, 0, 0)
     Return DllStructGetData($buf, 1)
 EndFunc
 
 Func _ReadBytes($hP, $hK, $iA, $iS)
-    Local $buf = DllStructCreate("byte[" & $iS & "]")
-    Local $r = DllCall($hK, "bool", "ReadProcessMemory", "handle", $hP, "ptr", $iA, "ptr", DllStructGetPtr($buf), "ulong_ptr", $iS, "ulong_ptr*", 0)
+    Dim $buf2 = DllStructCreate("byte[" & $iS & "]")
+    Dim $r = DllCall($hK, "bool", "ReadProcessMemory", "handle", $hP, "ptr", $iA, "ptr", DllStructGetPtr($buf2), "ulong_ptr", $iS, "ulong_ptr*", 0)
     If @error Or $r[0] = 0 Then Return SetError(1, 0, 0)
-    Return DllStructGetData($buf, 1)
-EndFunc
-
-Func _BytesToDword($bytes, $iOff)
-    Local $buf = DllStructCreate("byte[4]")
-    DllStructSetData($buf, 1, BinaryMid($bytes, $iOff + 1, 4))
-    Local $buf2 = DllStructCreate("dword", DllStructGetPtr($buf))
     Return DllStructGetData($buf2, 1)
 EndFunc
 
+Func _BytesToDword($bytes, $iOff)
+    Dim $b1 = DllStructCreate("byte[4]")
+    DllStructSetData($b1, 1, BinaryMid($bytes, $iOff + 1, 4))
+    Dim $b2 = DllStructCreate("dword", DllStructGetPtr($b1))
+    Return DllStructGetData($b2, 1)
+EndFunc
+
 Func _TryReadNameWithOffsets($hP, $hK, $base, $off1, $off2, $nameOff)
-    Local $v1 = _ReadDword($hP, $hK, $base)
+    Dim $v1 = _ReadDword($hP, $hK, $base)
     If $v1 = 0 Then Return ""
-    Local $v2 = _ReadDword($hP, $hK, $v1 + $off1)
+    Dim $v2 = _ReadDword($hP, $hK, $v1 + $off1)
     If $v2 = 0 Then Return ""
-    Local $pl = _ReadDword($hP, $hK, $v2 + $off2)
+    Dim $pl = _ReadDword($hP, $hK, $v2 + $off2)
     If $pl = 0 Then Return ""
-    Local $np = _ReadDword($hP, $hK, $pl + $nameOff)
+    Dim $np = _ReadDword($hP, $hK, $pl + $nameOff)
     If $np = 0 Then Return ""
-    Local $nb = DllStructCreate("wchar[50]")
+    Dim $nb = DllStructCreate("wchar[50]")
     DllCall($hK, "bool", "ReadProcessMemory", "handle", $hP, "ptr", $np, "ptr", DllStructGetPtr($nb), "ulong_ptr", 100, "ulong_ptr*", 0)
     Return DllStructGetData($nb, 1)
 EndFunc
 
 Func _FormatAddrs($arr)
-    Local $s = ""
-    Local $max = UBound($arr) - 1
+    Dim $s = ""
+    Dim $max = UBound($arr) - 1
     If $max > 19 Then $max = 19
     For $i = 0 To $max
         $s &= "  0x" & Hex($arr[$i]) & @CRLF

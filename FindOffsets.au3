@@ -39,7 +39,7 @@ Global $gLastUpdate = 0
 ; Shared variables for loops
 Dim $ret, $rBase, $rSize, $rState, $rProtect, $rType
 Dim $chunkSize, $readSize, $data, $dataStr, $pos, $found, $foundAddr
-Dim $rdSz, $chunk, $val, $ptrAddr, $bp, $off, $offset
+Dim $rdSz, $chunk, $val, $val64, $ptrAddr, $bp, $off, $offset
 Dim $addr, $regionCount, $mbi
 
 ; ==========================================
@@ -118,23 +118,23 @@ While 1
     If $rState = 0x1000 And BitAND($rProtect, 0x100) = 0 And $rSize < 0x10000000 Then
         $chunkSize = 65536
         If $rSize < $chunkSize Then $chunkSize = $rSize
-        For $off = 0 To $rSize - 4 Step $chunkSize
+        For $off = 0 To $rSize - 8 Step $chunkSize
             $rdSz = $chunkSize
             If $off + $rdSz > $rSize Then $rdSz = $rSize - $off
-            If $rdSz < 4 Then ContinueLoop
+            If $rdSz < 8 Then ContinueLoop
             $chunk = _ReadBytes($hProc, $hK32, $rBase + $off, $rdSz)
             If @error Then ContinueLoop
 
-            For $bp = 0 To $rdSz - 4 Step 4
-                $val = _BytesToDword($chunk, $bp)
-                If $val < 0x10000 Then ContinueLoop
-
+            ; Scan for both 4-byte and 8-byte pointers
+            For $bp = 0 To $rdSz - 8 Step 4
+                ; Try 8-byte pointer first (64-bit)
+                $val64 = _BytesToPtr($chunk, $bp)
                 For $n = 0 To UBound($nameAddresses) - 1
-                    If $val = $nameAddresses[$n] Then
+                    If $val64 = $nameAddresses[$n] Then
                         $ptrAddr = $rBase + $off + $bp
                         ReDim $namePointers[UBound($namePointers, 1) + 1][2]
                         $namePointers[UBound($namePointers, 1) - 1][0] = $ptrAddr
-                        $namePointers[UBound($namePointers, 1) - 1][1] = $val
+                        $namePointers[UBound($namePointers, 1) - 1][1] = $val64
                         If UBound($namePointers, 1) >= 100 Then ExitLoop 4
                     EndIf
                 Next
@@ -169,13 +169,13 @@ Dim $namePtrAddr, $tryPlayerBase, $nameCheck, $possibleID, $idOffset, $idVal, $t
 For $i = 0 To UBound($namePointers, 1) - 1
     $namePtrAddr = $namePointers[$i][0]
 
-    For $tryOffset = 0 To 0x1800 Step 4
+    For $tryOffset = 0 To 0x1800 Step 8
         $tryPlayerBase = $namePtrAddr - $tryOffset
-        $nameCheck = _ReadDword($hProc, $hK32, $tryPlayerBase + $tryOffset)
+        $nameCheck = _ReadQword($hProc, $hK32, $tryPlayerBase + $tryOffset)
         If $nameCheck = $namePointers[$i][1] Then
             $possibleID = 0
             $idOffset = 0
-            For $tryID = 0x700 To 0x1000 Step 4
+            For $tryID = 0x700 To 0x1000 Step 8
                 $idVal = _ReadDword($hProc, $hK32, $tryPlayerBase + $tryID)
                 If $idVal > 1000 And $idVal < 100000000 Then
                     $possibleID = $idVal
@@ -211,9 +211,9 @@ Dim $npa, $tpb, $nc
 
 For $z = 0 To UBound($namePointers, 1) - 1
     $npa = $namePointers[$z][0]
-    For $tryOff = 0 To 0x1800 Step 4
+    For $tryOff = 0 To 0x1800 Step 8
         $tpb = $npa - $tryOff
-        $nc = _ReadDword($hProc, $hK32, $tpb + $tryOff)
+        $nc = _ReadQword($hProc, $hK32, $tpb + $tryOff)
         If $nc = $namePointers[$z][1] Then
             ReDim $playerAddrs[UBound($playerAddrs) + 1]
             $playerAddrs[UBound($playerAddrs) - 1] = $tpb
@@ -273,8 +273,8 @@ For $pi = 0 To UBound($playerAddrs) - 1
                 If $rdSz < 4 Then ContinueLoop
                 $chunk = _ReadBytes($hProc, $hK32, $rBase + $off, $rdSz)
                 If @error Then ContinueLoop
-                For $bp = 0 To $rdSz - 4 Step 4
-                    If _BytesToDword($chunk, $bp) = $pAddr Then
+                For $bp = 0 To $rdSz - 8 Step 4
+                    If _BytesToPtr($chunk, $bp) = $pAddr Then
                         ReDim $ptrToPlayer[UBound($ptrToPlayer) + 1]
                         $ptrToPlayer[UBound($ptrToPlayer) - 1] = $rBase + $off + $bp
                         If UBound($ptrToPlayer) >= 30 Then ExitLoop 3
@@ -293,10 +293,10 @@ For $pi = 0 To UBound($playerAddrs) - 1
         $playerPtrLoc = $ptrToPlayer[$pp]
         _TickProgress("Phase 4b: Testing player ptr " & ($pp + 1) & "/" & UBound($ptrToPlayer), "Trying offset combinations...")
 
-        For $tryPO = 0 To 0x200 Step 4
+        For $tryPO = 0 To 0x200 Step 8
             $listBase = $playerPtrLoc - $tryPO
 
-            For $tryL2Off = 0 To 0x100 Step 4
+            For $tryL2Off = 0 To 0x100 Step 8
                 $level1Val = $listBase - $tryL2Off
                 _TickProgress("Phase 4c: PO=0x" & Hex($tryPO) & " L2=0x" & Hex($tryL2Off), "Scanning exe/dll for base...")
 
@@ -319,8 +319,8 @@ For $pi = 0 To UBound($playerAddrs) - 1
                             If $rdSz < 4 Then ContinueLoop
                             $chunk = _ReadBytes($hProc, $hK32, $sBase + $off, $rdSz)
                             If @error Then ContinueLoop
-                            For $bp = 0 To $rdSz - 4 Step 4
-                                If _BytesToDword($chunk, $bp) = $level1Val Then
+                            For $bp = 0 To $rdSz - 8 Step 8
+                                If _BytesToPtr($chunk, $bp) = $level1Val Then
                                     $candidateBase = $sBase + $off + $bp
                                     $vName = _TryReadNameWithOffsets($hProc, $hK32, $candidateBase, $tryL2Off, $tryPO, $pNameOff)
                                     If $vName = $charName Then
@@ -412,14 +412,29 @@ Func _BytesToDword($bytes, $iOff)
     Return DllStructGetData($b2, 1)
 EndFunc
 
+Func _BytesToPtr($bytes, $iOff)
+    Dim $b1 = DllStructCreate("byte[8]")
+    DllStructSetData($b1, 1, BinaryMid($bytes, $iOff + 1, 8))
+    Dim $b2 = DllStructCreate("ptr", DllStructGetPtr($b1))
+    Return DllStructGetData($b2, 1)
+EndFunc
+
+Func _ReadQword($hP, $hK, $iA)
+    Dim $buf = DllStructCreate("ptr")
+    DllCall($hK, "bool", "ReadProcessMemory", "handle", $hP, "ptr", $iA, "ptr", DllStructGetPtr($buf), "ulong_ptr", 8, "ulong_ptr*", 0)
+    If @error Then Return SetError(1, 0, 0)
+    Return DllStructGetData($buf, 1)
+EndFunc
+
 Func _TryReadNameWithOffsets($hP, $hK, $base, $off1, $off2, $nameOff)
-    Dim $v1 = _ReadDword($hP, $hK, $base)
+    ; Try 64-bit pointers first, fall back to 32-bit
+    Dim $v1 = _ReadQword($hP, $hK, $base)
     If $v1 = 0 Then Return ""
-    Dim $v2 = _ReadDword($hP, $hK, $v1 + $off1)
+    Dim $v2 = _ReadQword($hP, $hK, $v1 + $off1)
     If $v2 = 0 Then Return ""
-    Dim $pl = _ReadDword($hP, $hK, $v2 + $off2)
+    Dim $pl = _ReadQword($hP, $hK, $v2 + $off2)
     If $pl = 0 Then Return ""
-    Dim $np = _ReadDword($hP, $hK, $pl + $nameOff)
+    Dim $np = _ReadQword($hP, $hK, $pl + $nameOff)
     If $np = 0 Then Return ""
     Dim $nb = DllStructCreate("wchar[50]")
     DllCall($hK, "bool", "ReadProcessMemory", "handle", $hP, "ptr", $np, "ptr", DllStructGetPtr($nb), "ulong_ptr", 100, "ulong_ptr*", 0)

@@ -6,23 +6,22 @@
 ; and global data addresses for 64-bit client.
 ; ============================================
 
+; Enable SeDebugPrivilege so we can open the game process
+_EnableDebugPrivilege()
+
 Local $PID = ProcessExists("elementclient_64.exe")
 If $PID = 0 Then
 	MsgBox(16, "Error", "elementclient_64.exe is not running!" & @CRLF & "Log into a character first.")
 	Exit
 EndIf
 
-MsgBox(64, "Debug", "Found PID: " & $PID & @CRLF & "AutoIt x64: " & @AutoItX64 & @CRLF & "Running as admin: " & IsAdmin())
-
 Local $hK32 = DllOpen("kernel32.dll")
-Local $aOpen = DllCall($hK32, "handle", "OpenProcess", "dword", 0x0410, "bool", 0, "dword", $PID)
-If @error Then
-	MsgBox(16, "Error", "DllCall failed with @error=" & @error & @CRLF & "Make sure you run with AutoIt3_x64.exe")
-	Exit
-EndIf
-If $aOpen[0] = 0 Then
-	Local $lastErr = DllCall("kernel32.dll", "dword", "GetLastError")
-	MsgBox(16, "Error", "OpenProcess failed." & @CRLF & "GetLastError: " & $lastErr[0] & @CRLF & @CRLF & "Try: run AutoIt3_x64.exe as Administrator")
+Local $aOpen = DllCall($hK32, "handle", "OpenProcess", "dword", 0x1F0FFF, "bool", 0, "dword", $PID)
+If @error Or $aOpen[0] = 0 Then
+	MsgBox(16, "Error", "Cannot open game process (PID " & $PID & ")." & @CRLF & @CRLF & _
+		"Try one of these:" & @CRLF & _
+		"1. Right-click AutoIt3_x64.exe -> Run as Administrator" & @CRLF & _
+		"2. Or right-click this .au3 -> Run Script (x64) as Admin")
 	Exit
 EndIf
 Local $hProc = $aOpen[0]
@@ -636,4 +635,26 @@ Func _GetModuleBase64($hProc, $hK32, $moduleName)
 	Next
 	DllClose($hPsapi2)
 	Return 0
+EndFunc
+
+Func _EnableDebugPrivilege()
+	Local $hAdvapi = DllOpen("advapi32.dll")
+	Local $hToken = DllStructCreate("handle")
+	DllCall($hAdvapi, "bool", "OpenProcessToken", "handle", DllCall("kernel32.dll", "handle", "GetCurrentProcess")[0], _
+		"dword", 0x0028, "ptr", DllStructGetPtr($hToken))
+	If @error Then
+		DllClose($hAdvapi)
+		Return
+	EndIf
+	Local $luid = DllStructCreate("dword LowPart; long HighPart")
+	DllCall($hAdvapi, "bool", "LookupPrivilegeValueW", "ptr", 0, "wstr", "SeDebugPrivilege", "ptr", DllStructGetPtr($luid))
+	Local $tp = DllStructCreate("dword Count; dword LowPart; long HighPart; dword Attributes")
+	DllStructSetData($tp, "Count", 1)
+	DllStructSetData($tp, "LowPart", DllStructGetData($luid, "LowPart"))
+	DllStructSetData($tp, "HighPart", DllStructGetData($luid, "HighPart"))
+	DllStructSetData($tp, "Attributes", 0x02)
+	DllCall($hAdvapi, "bool", "AdjustTokenPrivileges", "handle", DllStructGetData($hToken, 1), _
+		"bool", 0, "ptr", DllStructGetPtr($tp), "dword", 0, "ptr", 0, "ptr", 0)
+	DllCall("kernel32.dll", "bool", "CloseHandle", "handle", DllStructGetData($hToken, 1))
+	DllClose($hAdvapi)
 EndFunc

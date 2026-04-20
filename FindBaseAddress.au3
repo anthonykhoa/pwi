@@ -50,14 +50,28 @@ If $charName = "" Then
 EndIf
 
 ; Create progress window
-Global $hProgressGUI = GUICreate("Scanning...", 400, 120, -1, -1)
+Global $hProgressGUI = GUICreate("Scanning...", 400, 150, -1, -1)
 Global $hProgressLabel = GUICtrlCreateLabel("Starting scan... Please wait.", 20, 20, 360, 30)
 Global $hProgressDetail = GUICtrlCreateLabel("", 20, 60, 360, 40)
+Global $hProgressTimer = GUICtrlCreateLabel("", 20, 110, 360, 20)
 GUISetState(@SW_SHOW, $hProgressGUI)
+
+Global $gScanStartTime = TimerInit()
+Global $gTimeoutMs = 0 ; no timeout
 
 Func _UpdateProgress($msg, $detail = "")
     GUICtrlSetData($hProgressLabel, $msg)
     GUICtrlSetData($hProgressDetail, $detail)
+    Local $elapsed = Round(TimerDiff($gScanStartTime) / 1000)
+    Local $remaining = Round(($gTimeoutMs / 1000) - $elapsed)
+    If $remaining < 0 Then $remaining = 0
+    GUICtrlSetData($hProgressTimer, "Elapsed: " & $elapsed & "s | Timeout in: " & $remaining & "s")
+EndFunc
+
+Func _CheckTimeout()
+    ; No timeout - just update the elapsed timer
+    Local $elapsed = Round(TimerDiff($gScanStartTime) / 1000)
+    GUICtrlSetData($hProgressTimer, "Elapsed: " & $elapsed & "s | No timeout - will run until done")
 EndFunc
 
 ; Step 5: Try the known 32-bit ADDRESS_BASE first (unlikely to work but fast check)
@@ -101,8 +115,10 @@ _UpdateProgress("Step 3: Found " & UBound($foundAddresses) & " name matches. Tra
 Local $results = ""
 Local $resultCount = 0
 
-For $i = 0 To UBound($foundAddresses) - 1
+Local $totalMatches = UBound($foundAddresses)
+For $i = 0 To $totalMatches - 1
     Local $nameAddr = $foundAddresses[$i]
+    _UpdateProgress("Tracing match " & ($i + 1) & " of " & $totalMatches & "...", "Scanning for pointers to name address 0x" & Hex($nameAddr))
     ConsoleWrite("Checking name address: 0x" & Hex($nameAddr) & @CRLF)
 
     ; Find what pointer points to this name address
@@ -123,17 +139,9 @@ For $i = 0 To UBound($foundAddresses) - 1
         If $testName2 <> $charName Then ContinueLoop
 
         ConsoleWrite("Valid player object at: 0x" & Hex($playerAddr) & " (ID: " & $testID & ")" & @CRLF)
-
-        ; Now find what points to playerAddr at offset 0x34
-        ; [[BASE] + 0x1C] + 0x34 = playerAddr
-        ; So [BASE] + 0x1C points to (playerAddr - 0x34) ... no
-        ; Actually: read value at [[BASE]+0x1C] + 0x34 = playerAddr
-        ; So we need address where value at addr+0x34 = playerAddr
-        ; Scan for (playerAddr) at offset 0x34 from some pointer
+        _UpdateProgress("Match " & ($i + 1) & "/" & $totalMatches & ": Found player! Tracing level 2...", "Player at 0x" & Hex($playerAddr) & " (ID: " & $testID & ")")
 
         Local $playerListAddr = 0
-        ; Scan for pointer to playerAddr, but the pointer is at someAddr + 0x34
-        ; So we scan for the value playerAddr, and check if the address is someAddr + 0x34
         Local $ptrToPlayer = _ScanForPointer($hProcess, $hKernel32, $playerAddr)
 
         For $q = 0 To UBound($ptrToPlayer) - 1
@@ -149,7 +157,7 @@ For $i = 0 To UBound($foundAddresses) - 1
             ; So someVal + 0x1C is at an address that has value level2Addr
             ; We need to find someVal where read(someVal+0x1C) = level2Addr
 
-            ; Check if level2Addr - 0x1C is a valid read that gives us something useful
+            _UpdateProgress("Match " & ($i + 1) & "/" & $totalMatches & ": Tracing level 3...", "Scanning for pointer to 0x" & Hex($level2Addr))
             Local $ptrToLevel2 = _ScanForPointer($hProcess, $hKernel32, $level2Addr)
 
             For $r = 0 To UBound($ptrToLevel2) - 1
@@ -326,6 +334,7 @@ Func _ScanForString($hProc, $hK32, $searchStr)
     Local $mbi = DllStructCreate("ptr BaseAddress; ptr AllocationBase; dword AllocationProtect; ptr RegionSize; dword State; dword Protect; dword Type")
 
     While 1
+        _CheckTimeout()
         Local $ret = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $hProc, "ptr", $addr, "ptr", DllStructGetPtr($mbi), "ulong_ptr", DllStructGetSize($mbi))
         If @error Or $ret[0] = 0 Then ExitLoop
 
@@ -373,6 +382,7 @@ Func _ScanForPointer($hProc, $hK32, $targetVal)
     Local $mbi = DllStructCreate("ptr BaseAddress; ptr AllocationBase; dword AllocationProtect; ptr RegionSize; dword State; dword Protect; dword Type")
 
     While 1
+        _CheckTimeout()
         Local $ret = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $hProc, "ptr", $addr, "ptr", DllStructGetPtr($mbi), "ulong_ptr", DllStructGetSize($mbi))
         If @error Or $ret[0] = 0 Then ExitLoop
 

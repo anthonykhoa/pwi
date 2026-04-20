@@ -1,12 +1,10 @@
 #AutoIt3Wrapper_UseX64=y
 
-; ============================================
-; PWI 64-bit Full Offset & Address Scanner
-; Finds player struct offsets, function addresses,
-; and global data addresses for 64-bit client.
-; ============================================
+MsgBox(64, "Startup Check", "Script started!" & @CRLF & _
+	"AutoIt x64: " & @AutoItX64 & @CRLF & _
+	"Admin: " & IsAdmin() & @CRLF & _
+	"@AutoItExe: " & @AutoItExe)
 
-; Must run with 64-bit AutoIt
 If @AutoItX64 = 0 Then
 	MsgBox(16, "Error", "This script must be run with 64-bit AutoIt." & @CRLF & @CRLF & _
 		"Right-click the .au3 file and choose 'Run Script (x64)'" & @CRLF & _
@@ -34,21 +32,43 @@ If @error Or $aOpen[0] = 0 Then
 EndIf
 Local $hProc = $aOpen[0]
 
+; Write debug log to file so we can see what happens
+Global $debugLog = @ScriptDir & "\FindAllOffsets64_Debug.txt"
+Global $debugText = "=== DEBUG LOG ===" & @CRLF
+$debugText &= "AutoIt x64: " & @AutoItX64 & @CRLF
+$debugText &= "Admin: " & IsAdmin() & @CRLF
+$debugText &= "PID: " & $PID & @CRLF
+$debugText &= "Process handle: " & $hProc & @CRLF
+$debugText &= @CRLF
+
+$debugText &= "--- Method 1: EnumProcessModulesEx ---" & @CRLF
 Local $moduleBase = _GetModuleBase64($hProc, $hK32, "elementclient_64.exe")
+$debugText &= "Result: 0x" & Hex($moduleBase) & @CRLF & @CRLF
+
 If $moduleBase = 0 Then
-	; Fallback: try CreateToolhelp32Snapshot
+	$debugText &= "--- Method 2: CreateToolhelp32Snapshot ---" & @CRLF
 	$moduleBase = _GetModuleBaseSnapshot($hK32, $PID, "elementclient_64.exe")
+	$debugText &= "Result: 0x" & Hex($moduleBase) & @CRLF & @CRLF
 EndIf
+
 If $moduleBase = 0 Then
-	; Last resort: try the default 64-bit exe base
+	$debugText &= "--- Method 3: Direct test at 0x140000000 ---" & @CRLF
 	Local $testPtr = _ReadQword($hProc, $hK32, 0x140000000 + 0x1A213E8)
+	$debugText &= "Read at 0x140000000+0x1A213E8 = 0x" & Hex($testPtr) & @CRLF
 	If $testPtr <> 0 Then
 		$moduleBase = 0x140000000
-		MsgBox(64, "Info", "Using default module base 0x140000000 (verified via ADDRESS_BASE)")
+		$debugText &= "SUCCESS: Using 0x140000000" & @CRLF
 	EndIf
+	$debugText &= @CRLF
 EndIf
+
+; Save debug log regardless
+FileDelete($debugLog)
+FileWrite($debugLog, $debugText)
+
 If $moduleBase = 0 Then
-	MsgBox(16, "Error", "Could not find module base." & @CRLF & "All 3 methods failed.")
+	MsgBox(16, "Error", "Could not find module base. All 3 methods failed." & @CRLF & @CRLF & _
+		"Debug log saved to:" & @CRLF & $debugLog & @CRLF & @CRLF & "Paste the contents to Claude.")
 	Exit
 EndIf
 

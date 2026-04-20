@@ -1,7 +1,5 @@
 #RequireAdmin
-#include <Array.au3>
 #include <GUIConstantsEx.au3>
-#include <StaticConstants.au3>
 
 ; ============================================
 ; PWI 64-bit Base Address Finder

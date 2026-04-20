@@ -182,59 +182,11 @@ Next
 
 _Status("Phase 2 done: " & $candidates & " locations analyzed.")
 
-; ==========================================
-; PHASE 3: Try to find ADDRESS_BASE using
-; a flexible approach - for each name location,
-; try many possible offset combos and pointer
-; chain depths to find a static base
-; ==========================================
-_Status("Phase 3: Trying to find ADDRESS_BASE...")
-
 Dim $chainResults = ""
 Dim $chainCount = 0
-Dim $nameOff, $tryBase, $testResult
-
-; For each name address, try it as an inline name in a player object
-; Try different name offsets and see if we can build a working chain
-For $i = 0 To UBound($nameAddresses) - 1
-    If $chainCount > 0 Then ExitLoop
-    $nameAddr = $nameAddresses[$i]
-    _TickProgress("Phase 3: Testing name " & ($i + 1) & "/" & UBound($nameAddresses), "0x" & Hex($nameAddr))
-
-    ; Try name offsets from 0 to 0x2000 (step 8 for alignment)
-    For $nameOff = 0 To 0x2000 Step 8
-        If $chainCount > 0 Then ExitLoop
-        Dim $playerBase = $nameAddr - $nameOff
-
-        ; Now scan for what points to playerBase (64-bit pointer scan)
-        ; But full scan is too slow. Instead, check if we can find
-        ; a chain by reading backwards.
-
-        ; Try: is playerBase pointed to by something?
-        ; Read nearby memory and scan for pointers to playerBase
-        ; Check in the 64KB before playerBase
-        Dim $scanArea = _ReadBytes($hProc, $hK32, $playerBase - 0x10000, 0x10000)
-        If @error Then ContinueLoop
-
-        For $so = 0 To 0x10000 - 8 Step 8
-            Dim $pv = _BytesToPtr($scanArea, $so)
-            If $pv = $playerBase Then
-                ; Found a pointer to our player at (playerBase - 0x10000 + $so)
-                Dim $playerPtrLoc = $playerBase - 0x10000 + $so
-                Dim $playerOff = $playerPtrLoc - ($playerBase - 0x10000 + $so - ($playerPtrLoc - $playerBase))
-
-                ; This is getting complex. Let's try a simpler approach:
-                ; For each name address, try every combo of 3 offsets
-                ; and scan for a static base in exe/dll memory
-                ExitLoop
-            EndIf
-        Next
-    Next
-Next
 
 ; ==========================================
-; PHASE 3b: Brute force - just dump everything
-; we know and let the user/Claude figure it out
+; PHASE 3: Dump pointer data for Claude
 ; ==========================================
 
 ; Final approach: for each name address, read the surrounding 4KB

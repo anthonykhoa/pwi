@@ -28869,12 +28869,12 @@ FUNC SETCLIENTSDATA($RENAME = 1)
 			$GAME_EXE = "elementclient_64.exe"
 			$GAME_PID = PROCESSEXISTS($GAME_EXE)
 			$GAME_PROCESS = _MEMORYOPEN($GAME_PID)
-			APPLYPATCHESFORALL()
+			; APPLYPATCHESFORALL() ; disabled - patch addresses are 32-bit, wrong for 64-bit client
 			REFRESHCLIENTS()
 		ENDIF
 	ELSE
 		$ADDRESS_BASE = $CLIENTS[0][6]
-		APPLYPATCHESFORALL()
+		; APPLYPATCHESFORALL() ; disabled - patch addresses are 32-bit, wrong for 64-bit client
 		$MAIN = $CLIENTS[0][2]
 		SWITCHTO($CLIENTS[0][2])
 	ENDIF

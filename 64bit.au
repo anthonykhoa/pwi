@@ -26102,7 +26102,7 @@ GLOBAL $KERNEL32
 	ENDFUNC
 #EndRegion _Memory
 GLOBAL $KERNEL32 = DLLOPEN("kernel32.dll")
-DIM $GAME_EXE = "elementclient.exe"
+DIM $GAME_EXE = "elementclient_64.exe"
 DIM $GAME_PID = PROCESSEXISTS($GAME_EXE)
 DIM $GAME_PROCESS = _MEMORYOPEN($GAME_PID)
 DIM $CURRENT_CLIENT = 0
@@ -28796,7 +28796,7 @@ FUNC SETCLIENTSDATA($RENAME = 1)
 			_MEMORYCLOSE($CLIENTS[$I][1])
 		ENDIF
 	NEXT
-	$LIST = PROCESSLIST("elementclient.exe")
+	$LIST = PROCESSLIST("elementclient_64.exe")
 	PRINT("Num Clients Found: " & $LIST[0][0])
 	IF $LIST[0][0] > 0 THEN
 		REDIM $CLIENTS[$LIST[0][0]][6]
@@ -28834,10 +28834,10 @@ FUNC SETCLIENTSDATA($RENAME = 1)
 		ENDIF
 	ENDIF
 	IF UBOUND($CLIENTS) == 0 THEN
-		$RESPONSE = MSGBOX(5, "No clients detected", "No clients were detected." & @CRLF & "Make sure you are logged in to PWI." & @CRLF & "You may need to set an exclusion in Windows Defender." & @CRLF & "You may need to run the exe as an Administrator." & @CRLF & "Client should be running in 32 bits to be detected.")
+		$RESPONSE = MSGBOX(5, "No clients detected", "No 64-bit clients were detected." & @CRLF & "Make sure you are logged in to PWI using the 64-bit client." & @CRLF & "You may need to set an exclusion in Windows Defender." & @CRLF & "You may need to run the exe as an Administrator.")
 		IF $RESPONSE == 2 THEN
 		ELSE
-			$GAME_EXE = "elementclient.exe"
+			$GAME_EXE = "elementclient_64.exe"
 			$GAME_PID = PROCESSEXISTS($GAME_EXE)
 			$GAME_PROCESS = _MEMORYOPEN($GAME_PID)
 			APPLYPATCHESFORALL()
@@ -52143,19 +52143,19 @@ FUNC MAKESETTINGSCONTROLS()
 	SETTINGSCHECKBOX("Enable notifications", "notifications", "False")
 	GUICTRLSETTIP(-1, "Sends notification messages from bot to the Windows notifications panel on Windows 10 or higher. Interesting but probably not needed!.")
 	SETTINGSCHECKBOX("Rename client windows", "renamewindows", "True")
-	GUICTRLSETTIP(-1, "Changes names of all 32bit elementclient.exe windows detected to the character name of the character loaded on that client.")
+	GUICTRLSETTIP(-1, "Changes names of all elementclient_64.exe windows detected to the character name of the character loaded on that client.")
 	SETTINGSCHECKBOX("Mass command actions also apply to self", "massforself", "True")
 	GUICTRLSETTIP(-1, "When using a hotkey that causes all characters to do some action, " & @CRLF & "that action also takes place for the main character bot is set to.")
 	SETTINGSCHECKBOX("Hotkeys apply to foreground client.", "hotkeysforegroundclient", "False")
 	GUICTRLSETTIP(-1, "Hotkeys target the foreground client instead of the selected client" & @CRLF & "The foreground client must be in the list of clients in the dropdown." & @CRLF & 'For example, if bot is set to a character named "Bob" but the foremost game client is "Roger",' & @CRLF & 'ticking this setting causes the hotkey to apply to "Roger" instead of "Bob"')
 	SETTINGSCHECKBOX("Hotkeys only trigger if a game client is foreground", "onlytriggerhotkeyifagameclientisforeground", "False")
-	GUICTRLSETTIP(-1, "Hotkey will only cause an in-game action if an elementclient.exe window is in the foreground on Windows 10 or higher.")
+	GUICTRLSETTIP(-1, "Hotkey will only cause an in-game action if an elementclient_64.exe window is in the foreground on Windows 10 or higher.")
 	SETTINGSCHECKBOX("", "none", TRUE, FALSE, TRUE, "")
 	SETTINGSCHECKBOX("General Character Settings", "none", TRUE, FALSE, TRUE, "Non-daily settings that modify how your character behaves under various situations.")
 	SETTINGSCHECKBOX("Auto harvest farm/garden in homestead", "autoharvesthomestead", "False")
 	GUICTRLSETTIP(-1, "Harvest farm/garden in character homestead anytime the character enters their homestead.")
 	SETTINGSCHECKBOX("Auto switch form when casting macros", "autoswitchform", "True")
-	GUICTRLSETTIP(-1, "If Barb / Veno / Cleric is casting a macro, bot will decide to switch forms if:" & @CRLF & "- There are no skills in the macro that are ready and compatible with current form." & @CRLF & "- There are skills in the macro that are ready and require a form change." & @CRLF & "- The form change skill is ready to be cast." & @CRLF & @CRLF & "This allows you to mix skills for different forms in the same macro." & @CRLF & "CAUTION: permitting this MIGHT make elementclient.exe more likely to crash.")
+	GUICTRLSETTIP(-1, "If Barb / Veno / Cleric is casting a macro, bot will decide to switch forms if:" & @CRLF & "- There are no skills in the macro that are ready and compatible with current form." & @CRLF & "- There are skills in the macro that are ready and require a form change." & @CRLF & "- The form change skill is ready to be cast." & @CRLF & @CRLF & "This allows you to mix skills for different forms in the same macro." & @CRLF & "CAUTION: permitting this MIGHT make elementclient_64.exe more likely to crash.")
 	SETTINGSCHECKBOX("Veno does not buff summer sprint", "venoDoesNotBuffSummerSprint", "true")
 	GUICTRLSETTIP(-1, "Tick this if having the veno use summer sprint buff when buffing causes" & @CRLF & "veno to move too fast, creating issues with pathing.")
 	SETTINGSCHECKBOX("Enable ingame autopot without stone", "builtinautopot", "True")

@@ -6,6 +6,14 @@
 ; and global data addresses for 64-bit client.
 ; ============================================
 
+; Must run with 64-bit AutoIt
+If @AutoItX64 = 0 Then
+	MsgBox(16, "Error", "This script must be run with 64-bit AutoIt." & @CRLF & @CRLF & _
+		"Right-click the .au3 file and choose 'Run Script (x64)'" & @CRLF & _
+		"Or drag it onto AutoIt3_x64.exe")
+	Exit
+EndIf
+
 ; Enable SeDebugPrivilege so we can open the game process
 _EnableDebugPrivilege()
 
@@ -28,7 +36,19 @@ Local $hProc = $aOpen[0]
 
 Local $moduleBase = _GetModuleBase64($hProc, $hK32, "elementclient_64.exe")
 If $moduleBase = 0 Then
-	MsgBox(16, "Error", "Could not find module base.")
+	; Fallback: try CreateToolhelp32Snapshot
+	$moduleBase = _GetModuleBaseSnapshot($hK32, $PID, "elementclient_64.exe")
+EndIf
+If $moduleBase = 0 Then
+	; Last resort: try the default 64-bit exe base
+	Local $testPtr = _ReadQword($hProc, $hK32, 0x140000000 + 0x1A213E8)
+	If $testPtr <> 0 Then
+		$moduleBase = 0x140000000
+		MsgBox(64, "Info", "Using default module base 0x140000000 (verified via ADDRESS_BASE)")
+	EndIf
+EndIf
+If $moduleBase = 0 Then
+	MsgBox(16, "Error", "Could not find module base." & @CRLF & "All 3 methods failed.")
 	Exit
 EndIf
 
@@ -610,29 +630,47 @@ EndFunc
 
 Func _GetModuleBase64($hProc, $hK32, $moduleName)
 	Local $hPsapi2 = DllOpen("psapi.dll")
-	If $hPsapi2 = -1 Then Return 0
+	If $hPsapi2 = -1 Then
+		MsgBox(16, "Debug", "Failed to open psapi.dll")
+		Return 0
+	EndIf
 	Local $modArray2 = DllStructCreate("ptr[1024]")
 	Local $cbNeeded2 = DllStructCreate("dword")
-	DllCall($hPsapi2, "bool", "EnumProcessModulesEx", _
+	Local $enumResult = DllCall($hPsapi2, "bool", "EnumProcessModulesEx", _
 		"handle", $hProc, "ptr", DllStructGetPtr($modArray2), _
 		"dword", DllStructGetSize($modArray2), "ptr", DllStructGetPtr($cbNeeded2), "dword", 0x03)
 	If @error Then
+		MsgBox(16, "Debug", "EnumProcessModulesEx DllCall @error=" & @error)
 		DllClose($hPsapi2)
 		Return 0
 	EndIf
-	Local $numMod2 = DllStructGetData($cbNeeded2, 1) / DllStructGetSize(DllStructCreate("ptr"))
+	If $enumResult[0] = 0 Then
+		Local $lastErr2 = DllCall("kernel32.dll", "dword", "GetLastError")
+		MsgBox(16, "Debug", "EnumProcessModulesEx returned False. GetLastError=" & $lastErr2[0])
+		DllClose($hPsapi2)
+		Return 0
+	EndIf
+	Local $cbVal = DllStructGetData($cbNeeded2, 1)
+	Local $ptrSize = DllStructGetSize(DllStructCreate("ptr"))
+	Local $numMod2 = $cbVal / $ptrSize
 	If $numMod2 > 1024 Then $numMod2 = 1024
+
+	Local $moduleNames = "Modules found (" & $numMod2 & "):" & @CRLF
 	For $i = 1 To $numMod2
 		Local $hMod2 = DllStructGetData($modArray2, 1, $i)
 		Local $nameBuf2 = DllStructCreate("wchar[260]")
 		DllCall($hPsapi2, "dword", "GetModuleBaseNameW", _
 			"handle", $hProc, "handle", $hMod2, _
 			"ptr", DllStructGetPtr($nameBuf2), "dword", 260)
-		If StringInStr(DllStructGetData($nameBuf2, 1), $moduleName) Then
+		Local $modName = DllStructGetData($nameBuf2, 1)
+		If $i <= 10 Then $moduleNames &= "  " & $i & ": " & $modName & " (0x" & Hex($hMod2) & ")" & @CRLF
+		If StringInStr($modName, $moduleName) Then
+			MsgBox(64, "Debug", "Found module '" & $modName & "' at 0x" & Hex($hMod2))
 			DllClose($hPsapi2)
 			Return $hMod2
 		EndIf
 	Next
+	MsgBox(16, "Debug", $moduleNames & @CRLF & "Did NOT find '" & $moduleName & "' in list!")
 	DllClose($hPsapi2)
 	Return 0
 EndFunc
@@ -657,4 +695,36 @@ Func _EnableDebugPrivilege()
 		"bool", 0, "ptr", DllStructGetPtr($tp), "dword", 0, "ptr", 0, "ptr", 0)
 	DllCall("kernel32.dll", "bool", "CloseHandle", "handle", DllStructGetData($hToken, 1))
 	DllClose($hAdvapi)
+EndFunc
+
+Func _GetModuleBaseSnapshot($hK32, $PID, $moduleName)
+	Local $hSnap = DllCall($hK32, "handle", "CreateToolhelp32Snapshot", "dword", 0x08, "dword", $PID)
+	If @error Or $hSnap[0] = Ptr(-1) Then Return 0
+
+	; MODULEENTRY32W struct for 64-bit
+	Local $sStruct = "dword dwSize; dword th32ModuleID; dword th32ProcessID; dword GlcntUsage; " & _
+		"ptr modBaseAddr; dword modBaseSize; handle hModule; wchar szModule[256]; wchar szExePath[260]"
+	Local $me = DllStructCreate($sStruct)
+	DllStructSetData($me, "dwSize", DllStructGetSize($me))
+
+	Local $ret = DllCall($hK32, "bool", "Module32FirstW", "handle", $hSnap[0], "ptr", DllStructGetPtr($me))
+	If @error Or $ret[0] = 0 Then
+		DllCall($hK32, "bool", "CloseHandle", "handle", $hSnap[0])
+		Return 0
+	EndIf
+
+	While 1
+		Local $name = DllStructGetData($me, "szModule")
+		If StringInStr($name, $moduleName) Then
+			Local $base = DllStructGetData($me, "modBaseAddr")
+			DllCall($hK32, "bool", "CloseHandle", "handle", $hSnap[0])
+			Return $base
+		EndIf
+		DllStructSetData($me, "dwSize", DllStructGetSize($me))
+		Local $next = DllCall($hK32, "bool", "Module32NextW", "handle", $hSnap[0], "ptr", DllStructGetPtr($me))
+		If @error Or $next[0] = 0 Then ExitLoop
+	WEnd
+
+	DllCall($hK32, "bool", "CloseHandle", "handle", $hSnap[0])
+	Return 0
 EndFunc

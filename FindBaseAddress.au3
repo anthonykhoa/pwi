@@ -33,14 +33,11 @@ If $aOpenProc[0] = 0 Then
 EndIf
 Local $hProcess = $aOpenProc[0]
 
-; Step 3: Get the base address of elementclient_64.exe module
+; Step 3: Get the base address of elementclient_64.exe module (optional, used for brute force fallback)
 Local $sModuleName = "elementclient_64.exe"
 Local $hModuleBase = _GetModuleBaseAddress($PID, $sModuleName)
 If $hModuleBase = 0 Then
-    MsgBox(16, "Error", "Could not find module base address for " & $sModuleName)
-    DllCall($hKernel32, "bool", "CloseHandle", "handle", $hProcess)
-    DllClose($hKernel32)
-    Exit
+    ConsoleWrite("Warning: Could not get module base address. Will still try scanning." & @CRLF)
 EndIf
 
 ; Step 4: Ask user for character name
@@ -161,7 +158,7 @@ For $i = 0 To UBound($foundAddresses) - 1
                     If $verifyName = $charName Then
                         $resultCount += 1
                         $results &= "ADDRESS_BASE = " & $baseAddr & "  (0x" & Hex($baseAddr) & ")" & @CRLF
-                        $results &= "  Module offset: 0x" & Hex($baseAddr - $hModuleBase) & @CRLF
+                        If $hModuleBase <> 0 Then $results &= "  Module offset: 0x" & Hex($baseAddr - $hModuleBase) & @CRLF
                         $results &= "  Character: " & $verifyName & @CRLF
                         $results &= "  Player ID: " & $testID & @CRLF
                         $results &= @CRLF
@@ -184,6 +181,14 @@ Else
 
     Local $bruteResults = ""
     Local $bruteCount = 0
+
+    If $hModuleBase = 0 Then
+        MsgBox(48, "Partial Results", "Could not find the full pointer chain and module base is unknown." & @CRLF & @CRLF & "Please share the name addresses below with Claude." & @CRLF & @CRLF & "Found character name at:" & @CRLF & _FormatNameAddresses($foundAddresses))
+        ClipPut(_FormatNameAddresses($foundAddresses))
+        DllCall($hKernel32, "bool", "CloseHandle", "handle", $hProcess)
+        DllClose($hKernel32)
+        Exit
+    EndIf
 
     ; Scan every dword in the .data/.rdata sections of the module (first 32MB)
     Local $scanSize = 0x2000000 ; 32MB
@@ -233,6 +238,14 @@ MsgBox(64, "Done", "Scan complete. Results copied to clipboard.")
 ; ============================================
 ; HELPER FUNCTIONS
 ; ============================================
+
+Func _FormatNameAddresses($addrs)
+    Local $s = ""
+    For $i = 0 To UBound($addrs) - 1
+        $s &= "0x" & Hex($addrs[$i]) & @CRLF
+    Next
+    Return $s
+EndFunc
 
 Func _ReadDword($hProc, $hK32, $addr)
     Local $buf = DllStructCreate("dword")
@@ -396,9 +409,18 @@ Func _ScanForPointerInModule($hProc, $hK32, $targetVal, $moduleBase)
 EndFunc
 
 Func _GetModuleBaseAddress($pid, $moduleName)
-    Local $hSnapshot = DllCall("kernel32.dll", "handle", "CreateToolhelp32Snapshot", "dword", 0x8, "dword", $pid)
-    If @error Or $hSnapshot[0] = -1 Then Return 0
-    $hSnapshot = $hSnapshot[0]
+    ; Try multiple times - CreateToolhelp32Snapshot can fail on first attempt
+    ; Use 0x18 = TH32CS_SNAPMODULE (0x8) + TH32CS_SNAPMODULE32 (0x10)
+    Local $hSnapshot = 0
+    For $attempt = 1 To 5
+        Local $snapResult = DllCall("kernel32.dll", "handle", "CreateToolhelp32Snapshot", "dword", 0x18, "dword", $pid)
+        If Not @error And $snapResult[0] <> -1 And $snapResult[0] <> 0 Then
+            $hSnapshot = $snapResult[0]
+            ExitLoop
+        EndIf
+        Sleep(500)
+    Next
+    If $hSnapshot = 0 Then Return 0
 
     Local $MODULEENTRY32 = DllStructCreate("dword dwSize; dword th32ModuleID; dword th32ProcessID; dword GlblcntUsage; dword ProccntUsage; ptr modBaseAddr; dword modBaseSize; handle hModule; wchar szModule[256]; wchar szExePath[260]")
     DllStructSetData($MODULEENTRY32, "dwSize", DllStructGetSize($MODULEENTRY32))
@@ -410,7 +432,8 @@ Func _GetModuleBaseAddress($pid, $moduleName)
     EndIf
 
     While 1
-        If StringLower(DllStructGetData($MODULEENTRY32, "szModule")) = StringLower($moduleName) Then
+        Local $foundModule = DllStructGetData($MODULEENTRY32, "szModule")
+        If StringLower($foundModule) = StringLower($moduleName) Then
             Local $base = DllStructGetData($MODULEENTRY32, "modBaseAddr")
             DllCall("kernel32.dll", "bool", "CloseHandle", "handle", $hSnapshot)
             Return $base

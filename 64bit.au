@@ -25990,8 +25990,8 @@ GLOBAL $KERNEL32
 		CONSOLEWRITE("Sending: " & $PACKET & @CRLF)
 		LOCAL $PREMOTETHREAD, $VBUFFER, $LOOP, $RESULT, $OPCODE, $PROCESSHANDLE, $PACKETADDRESS
 		$PROCESSHANDLE = $GAME_PROCESS[1]
-		$FUNCTIONADDRESS = DLLCALL($KERNEL32, "int", "VirtualAllocEx", "int", $PROCESSHANDLE, "ptr", 0, "int", 73, "int", 4096, "int", 64)
-		$PACKETADDRESS = DLLCALL($KERNEL32, "int", "VirtualAllocEx", "int", $PROCESSHANDLE, "ptr", 0, "int", $PACKETSIZE, "int", 4096, "int", 64)
+		$FUNCTIONADDRESS = DLLCALL($KERNEL32, "ptr", "VirtualAllocEx", "handle", $PROCESSHANDLE, "ptr", 0, "ulong_ptr", 73, "dword", 4096, "dword", 64)
+		$PACKETADDRESS = DLLCALL($KERNEL32, "ptr", "VirtualAllocEx", "handle", $PROCESSHANDLE, "ptr", 0, "ulong_ptr", $PACKETSIZE, "dword", 4096, "dword", 64)
 		$OPCODE &= "60"
 		$OPCODE &= "B8" & _HEX($ADDRESS_SENDPACKET)
 		$OPCODE &= "8B0D" & _HEX($ADDRESS_BASE)
@@ -27526,7 +27526,7 @@ ENDFUNC
 FUNC ISQUESTAVAILABLE($QUESTID)
 	IF NOT GAMEREADY() THEN RETURN 1
 	$PROCESSHANDLE = $GAME_PROCESS[1]
-	$RETURNADDRESS = DLLCALL("kernel32.dll", "int", "VirtualAllocEx", "int", $PROCESSHANDLE, "ptr", 0, "int", 4, "int", 4096, "int", 64)
+	$RETURNADDRESS = DLLCALL("kernel32.dll", "ptr", "VirtualAllocEx", "handle", $PROCESSHANDLE, "ptr", 0, "ulong_ptr", 4, "dword", 4096, "dword", 64)
 	$OPCODE = "60"
 	$OPCODE &= "B8" & _HEX($ADDRESS_BASE)
 	$OPCODE &= "8B00"
@@ -28293,13 +28293,7 @@ FUNC CASTFIRSTSKILL($SKILLS)
 	$QUEUEDSKILL = QUEUEDSKILL()
 	$FORMWRONG = FALSE
 	$TIMER = TIMERINIT()
-	$NUMSKILLS = UBOUND($SKILLS)
-	$STARTIDX = 0
-	IF $MACRO_ROTATION_INDEX >= 0 AND $MACRO_ROTATION_INDEX < $NUMSKILLS THEN
-		$STARTIDX = $MACRO_ROTATION_INDEX
-		$MACRO_ROTATION_INDEX = MOD($STARTIDX + 1, $NUMSKILLS)
-	ENDIF
-	FOR $I = $STARTIDX TO $NUMSKILLS - 1
+	FOR $I = 0 TO UBOUND($SKILLS) - 1
 		IF TIMERDIFF($TIMER) > 5000 THEN RETURN 0
 		IF $CURRSKILL > 0 AND $CURRSKILL == $SKILLS[$I] THEN
 			CONTINUELOOP
@@ -28332,13 +28326,7 @@ FUNC USEFIRSTSKILL($SKILLS, $TARGET)
 	IF $QUEUEDSKILL > 0 THEN RETURN
 	$FORMWRONG = FALSE
 	$TIMER = TIMERINIT()
-	$NUMSKILLS = UBOUND($SKILLS)
-	$STARTIDX = 0
-	IF $MACRO_ROTATION_INDEX >= 0 AND $MACRO_ROTATION_INDEX < $NUMSKILLS THEN
-		$STARTIDX = $MACRO_ROTATION_INDEX
-		$MACRO_ROTATION_INDEX = MOD($STARTIDX + 1, $NUMSKILLS)
-	ENDIF
-	FOR $I = $STARTIDX TO $NUMSKILLS - 1
+	FOR $I = 0 TO UBOUND($SKILLS) - 1
 		IF TIMERDIFF($TIMER) > 5000 THEN RETURN 0
 		IF $CURRSKILL > 0 AND $CURRSKILL == $SKILLS[$I] THEN
 			CONTINUELOOP
@@ -28834,7 +28822,7 @@ FUNC SETCLIENTSDATA($RENAME = 1)
 		ENDIF
 	ENDIF
 	IF UBOUND($CLIENTS) == 0 THEN
-		$RESPONSE = MSGBOX(5, "No clients detected", "No 64-bit clients were detected." & @CRLF & "Make sure you are logged in to PWI using the 64-bit client." & @CRLF & "You may need to set an exclusion in Windows Defender." & @CRLF & "You may need to run the exe as an Administrator.")
+		$RESPONSE = MSGBOX(5, "No clients detected", "No clients were detected." & @CRLF & "Make sure you are logged in to PWI." & @CRLF & "You may need to set an exclusion in Windows Defender." & @CRLF & "You may need to run the exe as an Administrator." & @CRLF & "Client should be running elementclient_64.exe to be detected.")
 		IF $RESPONSE == 2 THEN
 		ELSE
 			$GAME_EXE = "elementclient_64.exe"
@@ -31093,11 +31081,6 @@ FUNC FLY($DEST_X, $DEST_Y, $ALT = 50, $DISMOUNT = 1, $CHECK_TELE = TRUE, $TIMER 
 	WEND
 	IF $DISMOUNT == 1 THEN DROPDOWN()
 ENDFUNC
-FUNC FLYTOCOORDS($DISPLAY_X, $DISPLAY_Y)
-	$X = $DISPLAY_X * 10 - 4000
-	$Y = $DISPLAY_Y * 10 - 5500
-	FLY($X, $Y, 135)
-ENDFUNC
 FUNC FLYUP($HEIGHT = -1, $RES = TRUE)
 	$TIMER = TIMERINIT()
 	STOREMOUNT()
@@ -33085,33 +33068,81 @@ FUNC EXITNORTHERNREALM()
 	SLEEP(2000)
 ENDFUNC
 FUNC ENTERNORTHERNREALM()
-	IF GETNPCUNIQUEID("Messenger of Time Woyo") THEN
-		$TEAM = NORTHERNREALMTEAM()
-		IF $TEAM == 1 THEN
-			TAKEQUEST("Messenger of Time Woyo", 41944)
-		ELSEIF $TEAM == 2 THEN
-			TAKEQUEST("Messenger of Time Woyo", 41949)
-		ENDIF
-		SLEEP(2000)
-		IF NOT WAITFORNPC("Cosmos Cartographer", TRUE, 15000) THEN RETURN
-		SLEEP(2000)
-		RETURN
-	ENDIF
-	IF NOT TELEPORTSTONETO(2101) THEN
-		USETELEPORTMASTER("Teleport Master Yao", 2101)
-		SLEEP(3000)
-	ELSE
-		SLEEP(5000)
-	ENDIF
+	DOTELEPORTROUTE(478.76, 3248.16, 258.91)
+	SLEEP(5000)
+	WAITFORNPC("Teleport Master Yao")
 	TALKTONPC("Teleport Master Yao")
 	SLEEP(1000)
-	ACCEPTQUEST(41949)
-	SLEEP(500)
 	ACCEPTQUEST(41944)
+	SLEEP(1000)
+    ACCEPTQUEST(41949)
 	SLEEP(2000)
 	CLOSENPCWINDOW()
-	IF NOT WAITFORNPC("Cosmos Cartographer", TRUE, 15000) THEN RETURN
+	WAITFORNPC("Cosmos Cartographer")
 	SLEEP(2000)
+ENDFUNC
+FUNC FLYTOCOORDS1($DISPLAY_X, $DISPLAY_Y, $DISPLAY_Z = -1)
+	$X = $DISPLAY_X * 10 - 4000
+	$Y = $DISPLAY_Y * 10 - 5500
+	$Z = -1
+	IF $DISPLAY_Z <> -1 THEN $Z = $DISPLAY_Z * 10
+	FLY($X, $Y)
+	IF $Z <> -1 THEN MOVETO($X, $Y, $Z)
+ENDFUNC
+FUNC FLYTOCOORDS($DISPLAY_X, $DISPLAY_Y, $DISPLAY_Z = -1)
+	$X = $DISPLAY_X * 10 - 4000
+	$Y = $DISPLAY_Y * 10 - 5500
+	FLY($X, $Y, 135)
+ENDFUNC
+FUNC ECDAILY2()
+	DOTELEPORTROUTE(478.76, 3248.16, 258.91)
+	SLEEP(5000)
+	WAITFORNPC("Teleport Master Yao")
+	TALKTONPC("Teleport Master Yao")
+	SLEEP(1000)
+	ACCEPTQUEST(50268)
+	SLEEP(2000)
+	CLOSENPCWINDOW()
+	FLYTOCOORDS(184, 404, 69)
+	TALKTONPC("Holy Ritualmaster")
+	ACCEPTQUEST(50268)
+ENDFUNC
+FUNC ECDAILY()
+	DOTELEPORTROUTE(478.76, 3248.16, 258.91)
+	WAITFORNPC("Teleport Master Yao")
+	TALKTONPC("Teleport Master Yao")
+	SLEEP(5000)
+	ACCEPTQUEST(50268)
+	SLEEP(5000)
+	CLOSENPCWINDOW()
+	FLYTOCOORDS(184, 404, 69)
+	SLEEP(5000)
+	TALKTONPC("Holy Ritualmaster")
+	ACCEPTQUEST(51174)
+	SLEEP(5000)
+	CLOSENPCWINDOW()
+	SLEEP(5000)
+	IF HASQUEST(51939) THEN
+		FLYTOCOORDS(93, 374, 64)
+		SLEEP(5000)
+	ENDIF
+	FLYTOCOORDS(184, 404, 69)
+	SLEEP(5000)
+	TALKTONPC("Holy Ritualmaster")
+	SLEEP(5000)
+	CLOSENPCWINDOW()
+	HANDINQUEST(51839, 0)
+	IF HASQUEST(51848) THEN
+		FLYTOCOORDS(117, 297, 53)
+		TALKTONPC("Rainno Xiaoxiao")
+		ACCEPTQUEST(51916)
+		SLEEP(5000)
+	ENDIF
+	FLYTOCOORDS(184, 404, 69)
+	SLEEP(5000)
+	TALKTONPC("Holy Ritualmaster")
+	SLEEP(5000)
+	HANDINQUEST(51848, 0)
 ENDFUNC
 FUNC GATHERALTSINSQUAD()
 	$PARTYARRAY = PARTYARRAY()
@@ -48228,6 +48259,32 @@ FUNC MASSENTERFACTIONBASE($CLIENTSINDEXES)
 	SWITCHTO($MAIN)
 	SETSTATUS("Done.")
 ENDFUNC
+FUNC TURNINBHQUEST()
+	TRANSFERMAP($MAP_MAIN, 0, 495.15, 3236.29)
+	$QUESTID = GETCURRENTBHQUESTID()
+	$OPTION = 0
+	SETSTATUS("Turning in BH.")
+	TALKTONPC("Head Hunter")
+	COMPLETEQUESTOPTION($QUESTID, 0)
+	HANDINQUEST($QUESTID, $OPTION)
+	COMPLETEQUEST($QUESTID)
+	COMPLETEQUEST2($QUESTID)
+	COMPLETEQUESTOPTION($QUESTID, $OPTION)
+	HANDINQUEST($QUESTID, $OPTION)
+	COMPLETEQUEST($QUESTID)
+	COMPLETEQUEST2($QUESTID)
+	COMPLETEQUESTOPTION($QUESTID, $OPTION)
+	AUTOQUEST($QUESTID, 3)
+ENDFUNC
+FUNC MASSTURNINBHQUEST()
+	TURNINBHQUEST()
+	$CLIENTSINDEXES = GETSQUADALTS()
+	FOR $I = 0 TO UBOUND($CLIENTSINDEXES) - 1
+		$INDEX = $CLIENTSINDEXES[$I]
+		SWITCHTONUM($INDEX)
+		TURNINBHQUEST()
+	NEXT
+ENDFUNC
 FUNC TURNINBHQUESTS($CLIENTSINDEXES)
 	$NPCNAME = "Head Hunter"
 	$NPCUNIQUEID = GETNPCUNIQUEID($NPCNAME)
@@ -48266,7 +48323,7 @@ FUNC TURNINBHQUESTS($CLIENTSINDEXES)
 	SWITCHTO($MAIN)
 ENDFUNC
 FUNC GETCURRENTBHQUESTID()
-	LOCAL $QUESTS[7] = [37120, 37121, 19969, 37123, 37122, 19968, 19966]
+	LOCAL $QUESTS[9] = [37120, 37121, 19969, 37123, 37122, 19968, 19966, 46048, 19965]
 	FOR $I = 0 TO UBOUND($QUESTS) - 1
 		IF HASQUEST($QUESTS[$I]) THEN RETURN $QUESTS[$I]
 	NEXT
@@ -51433,7 +51490,7 @@ FUNC EXECUTEALLROUTES()
 		CONTROLCLICK($TITLE, "Execute", "Button76")
 		SLEEP(200)
 	NEXT
-	CONTROLCLICK($MAIN & " - " & $BOT_EXE_NAME, "Execute", "Button76")
+	CONTROLCLICK($MAIN & " - TheNightmareStuff", "Execute", "Button76")
 ENDFUNC
 FUNC EXECUTEROUTESQUAD()
 	$PARTY = PARTYARRAY()
@@ -53019,7 +53076,7 @@ ENDFUNC
 GLOBAL $ICURRENTSTEP = 0
 GLOBAL $ATUTORIALTEXT[7] = ["", "", "", "", "", "", ""]
 $ATUTORIALTEXT[0] = "WELCOME TO THE TheNightmareStuff TUTORIAL!. Here we will explain some important information about how TheNightmareStuff works and how it is intended to be used." & @CRLF & @CRLF & "Broadly speaking, TheNightmareStuff's use cases fall into two main categories:" & @CRLF & @CRLF & "1) Automating DAILY activities (daily quests, daily mob killings, etc), and" & @CRLF & '2) Allowing for the control of many characters at once through "mass" actions, for example when using a squad of 10 characters to solo instances for materials and coin.' & @CRLF & @CRLF & "Reminder that you can hover your mouse over nearly anything in the bot to get more information. In some cases where the tooltip isn't enough, there are " & "buttons you can press that provide a popup window like this tutorial to give extra information." & @CRLF & @CRLF & 'Next page explains how to use the "DAILY" tab.'
-$ATUTORIALTEXT[1] = "DAILIES" & @CRLF & @CRLF & "Multithreading isn't possible with TheNightmareStuff, however, it is still possible to use do dailies for multiple characters who are logged in simultaneously " & 'on different game clients (elementclient.exe). To achieve this, press the "Speed Dailies" button, which will open a TheNightmareStuff process for each PWI ' & "game client you have open and start that character's daily quests. The quests the bot will do are determined by tickboxes you have selected under the " & """Daily"" tab that is visible when you first open TheNightmareStuff. The bot will start at the top of the list and work it's way down, doing all dailies that " & "are ticked. Only those quests that are ticked within a group checkbox that is also ticked will be done. Also, character only does dailies it is qualified " & "to do by the game (in other words, if you tick a daily that the character isn't qualified to do yet, this is not a problem; that daily will simply be skipped!) " & "*CAUTION: YOUR COMPUTER MAY LAG OUT IF YOU HAVE TOO MANY PWI CLIENTS AND BOTS OPEN! It is up to each user to determine " & "how many PWI game clients and TheNightmareStuff.exe clients can be open at once before computer becomes too laggy to use." & @CRLF & @CRLF & "Sometimes a PWI game client will crash, leaving the daily quests for that character unfinished. Should this occur, start by closing the TheNightmareStuff.exe" & "that is associated with the now-crashed PWI client, open that PWI client again, open another TheNightmareStuff.exe, select the proper character from the dropdown " & 'menu in TheNightmareStuff, and then click "Do Dailies". The bot will resume dailies from where the character left off. Alternately, if you want to (for example) do only ' & 'a few specific dailies , manually click the "Go" button corresponding with each daily you wish to do, or the "Do Group" button corresponding with each ' & "group of dailies you wish to do." & @CRLF & @CRLF & 'Next page explains the difference between clicking "Buttons" in the bot vs pressing a "Hotkey".'
+$ATUTORIALTEXT[1] = "DAILIES" & @CRLF & @CRLF & "Multithreading isn't possible with TheNightmareStuff, however, it is still possible to use do dailies for multiple characters who are logged in simultaneously " & 'on different game clients (elementclient_64.exe). To achieve this, press the "Speed Dailies" button, which will open a TheNightmareStuff process for each PWI ' & "game client you have open and start that character's daily quests. The quests the bot will do are determined by tickboxes you have selected under the " & """Daily"" tab that is visible when you first open TheNightmareStuff. The bot will start at the top of the list and work it's way down, doing all dailies that " & "are ticked. Only those quests that are ticked within a group checkbox that is also ticked will be done. Also, character only does dailies it is qualified " & "to do by the game (in other words, if you tick a daily that the character isn't qualified to do yet, this is not a problem; that daily will simply be skipped!) " & "*CAUTION: YOUR COMPUTER MAY LAG OUT IF YOU HAVE TOO MANY PWI CLIENTS AND BOTS OPEN! It is up to each user to determine " & "how many PWI game clients and TheNightmareStuff.exe clients can be open at once before computer becomes too laggy to use." & @CRLF & @CRLF & "Sometimes a PWI game client will crash, leaving the daily quests for that character unfinished. Should this occur, start by closing the TheNightmareStuff.exe" & "that is associated with the now-crashed PWI client, open that PWI client again, open another TheNightmareStuff.exe, select the proper character from the dropdown " & 'menu in TheNightmareStuff, and then click "Do Dailies". The bot will resume dailies from where the character left off. Alternately, if you want to (for example) do only ' & 'a few specific dailies , manually click the "Go" button corresponding with each daily you wish to do, or the "Do Group" button corresponding with each ' & "group of dailies you wish to do." & @CRLF & @CRLF & 'Next page explains the difference between clicking "Buttons" in the bot vs pressing a "Hotkey".'
 $ATUTORIALTEXT[2] = "BUTTONS VS HOTKEYS" & @CRLF & @CRLF & "Buttons" & @CRLF & @CRLF & "Buttons let you execute all functions TheNightmareStuff is capable of (though some work better as a hotkey: see below). If bot " & 'is currently "idle" (that is, it is not currently carrying out any function you directed it to with button click or hotkey press) and you click a button, ' & 'then the bot immediately starts to carry out the function associated with button click. However, if the bot is not "idle", then the function associated ' & 'with the button click is queued up behind any functions the bot was already directed to do. For example, if I click "Full Buff", then "Mass Nuke" ' & 'buttons, the characters will do all the actions of "Full Buff", then start on the actions of "Mass Nuke".' & @CRLF & @CRLF & "Hotkeys" & @CRLF & @CRLF & "When a hotkey is pressed, the function associated with the hotkey is immediately executed. Any other actions the bot was carrying out are put on pause " & "(including any actions started by hotkey) while the new function is carried out. For some functions, it is very important " & 'to set a hotkey precisely for this reason: e.g, I button click "Mass Nuke", then I see a red circle on ground so I press hotkey for "Mass Absolute Domain ' & 'to cause my characteres to become immune to dmg for 5s. The bot stops the "Mass Nuke" temporarily to do the Ad then goes back to nuking. All of the functions ' & 'contained under the main "Combat" tab as well as the functions under "Misc > Utility " can have hotkeys associated with them. Please look under the "Hotkeys" ' & "tab to see the full list of functions that can be hotkeyed. NOTE: There is one special hardcoded hotkey that closes TheNightmareStuff.exe immediately if pressed. That hotkey is " & "SHIFT+ESC. Use it whenever you want to immediately close TheNightmareStuff.exe" & @CRLF & @CRLF & "Next page explains different options for moving characters within the game."
 $ATUTORIALTEXT[3] = "MOVING CHARACTERS: MANY OPTIONS!" & @CRLF & @CRLF & '"Mass Move" options:' & @CRLF & @CRLF & "Move nearby characters (within 60m) to the location of your main character." & @CRLF & @CRLF & '"Mass Follow":' & @CRLF & @CRLF & "Nearby characters are set to follow your main character. The follow breaks if characters following you get stuck on bumps in ground/etc." & @CRLF & @CRLF & '"Mass Navigate options" (under the "Navigate" tab):' & @CRLF & @CRLF & 'All options listed that say "Mass tele..." will use item called "Teleport Stone" to move characters to pre-determined locations. There are ' & "options provided for just moving the characters in your current squad, or *all* characters you have logged in." & @CRLF & @CRLF & "Special movement functions:" & @CRLF & @CRLF & 'For example, under "HFT" there is a button to move the character inside Heavenfall Temple and take the weekly quest in there. Under "Misc>Farming"' & "there are some functions that move characters into certain farming instances." & @CRLF & @CRLF & "Next page discusses most useful functions farmers (people who grind out instances in PWI to earn materials to sell for money) need to know about!"
 $ATUTORIALTEXT[4] = "TheNightmareStuff MAKES FARMING SO SO EASY!" & @CRLF & @CRLF & "FARM UPD" & @CRLF & @CRLF & "Bot straight-up automates one of the the critical endgame instances. If you have a strong enough squad of 10 characters you can log in at the same time " & "on the same computer, TheNightmareStuff is capable of grinding out UPD over and over and over to farm massive numbers of Dull Zenith Skull Shards." & @CRLF & @CRLF & "A good squad composition should include:" & @CRLF & @CRLF & "-1x mystic, 1x cleric, 1x stormbringer, 1x blademaster, 1x seeker, 1x barb, 1x veno, 1x assassin, and 2 more high damage dealers" & @CRLF & @CRLF & "Important steps to take to ensure FARM UPD works well:" & @CRLF & @CRLF & "-Fill up genie energy on all 10 characters before starting." & @CRLF & "-Have a big stack of teleport stones and teleport incense on each character." & @CRLF & "-Make sure each character has at least 3 rows of empty inventory space prior to starting." & @CRLF & "-Make sure that no character has full quest list." & @CRLF & "-MAKE SURE that squad lead is the SAME as the name displayed on TheNightmareStuff!" & @CRLF & @CRLF & "Next page continues talking about how TheNightmareStuff aids farming."
@@ -53077,7 +53134,7 @@ FUNC HANDLETUTORIALCLOSE()
 ENDFUNC
 FUNC MAKEGUI()
 	GLOBAL $YOFFSET = 18
-	$HGUI = GUICREATE($BOT_EXE_NAME, 310, 428 + $WINDOW_EXTRA_HEIGHT + 25, DEFAULT, DEFAULT, BITOR($WS_SIZEBOX, $WS_MINIMIZEBOX, $WS_MAXIMIZEBOX, $WS_SYSMENU))
+	$HGUI = GUICREATE("TheNightmareStuff", 310, 428 + $WINDOW_EXTRA_HEIGHT + 25, DEFAULT, DEFAULT, BITOR($WS_SIZEBOX, $WS_MINIMIZEBOX, $WS_MAXIMIZEBOX, $WS_SYSMENU))
 	REGISTERGUI($HGUI)
 	GUISETONEVENT($GUI_EVENT_CLOSE, "_Exit")
 	GUICTRLCREATELABEL("Selected:", 10, 10)
@@ -53459,11 +53516,9 @@ FUNC ONTABCHANGE()
 	ENDIF
 	GUISWITCH($HGUI)
 ENDFUNC
-GLOBAL $BOT_EXE_NAME = STRINGLEFT(@SCRIPTNAME, STRINGINSTR(@SCRIPTNAME, ".", 0, -1) - 1)
-GLOBAL $BOT_EXE_FILE = $BOT_EXE_NAME & ".exe"
 FUNC GETTITLE()
-	IF $MAIN THEN RETURN $MAIN & " - " & $BOT_EXE_NAME
-	RETURN $BOT_EXE_NAME
+	IF $MAIN THEN RETURN $MAIN & " - TheNightmareStuff"
+	RETURN "TheNightmareStuff"
 ENDFUNC
 FUNC UPDATECLIENTDATA()
 	$MAIN = GUICTRLREAD($HCOMBO)
@@ -53476,7 +53531,7 @@ FUNC UPDATECLIENTDATA()
 	REFRESHTOWERSETTINGS()
 	REFRESHAUTOPOTSETTINGS()
 ENDFUNC
-GLOBAL $DEFAULTORDERPICK = (PROCESSLIST($BOT_EXE_FILE))[0][0] - 1
+GLOBAL $DEFAULTORDERPICK = (PROCESSLIST("TheNightmareStuff.exe"))[0][0] - 1
 FUNC REFRESHCLIENTS()
 	SETCLIENTSDATA()
 	IF UBOUND($CLIENTS) == 0 THEN RETURN
@@ -53641,10 +53696,12 @@ FUNC DAILYCONTROLS2()
 	ADDDAILYCHECKBOX2("Auto Bank", "AutoBankDaily3", "Auto banks in Bamboo Village or Hidden Heroes, depends on setting.", "false")
 	ADDDAILYCHECKBOX2("BH 4-1 (Armor)", "PickUpBH4_1", "Go Etherblade and Picks BH 4-1, Only one BH will be picked", "false")
 	ADDDAILYCHECKBOX2("BH 4-2 (Armor)", "PickUpBH4_2", "Go Etherblade and Picks BH 4-2, Only one BH will be picked", "false")
+	ADDDAILYCHECKBOX2("BH FSP (Wep)", "PickUpBHFSP", "Go Etherblade and Picks BH FSP, Only one BH will be picked", "false")
 	ADDDAILYCHECKBOX2("BH UPD (Wep)", "PickUpBHUPD", "Go Etherblade and Picks BH UPD, Only one BH will be picked", "false")
 	ADDDAILYCHECKBOX2("BH WM  (Wep)", "PickUpBHWM", "Go Etherblade and Picks BH WM, Only one BH will be picked", "false")
 	ADDDAILYCHECKBOX2("BH IU  (Artifact)", "PickUpBHIU", "Go Etherblade and Picks BH IU, Only one BH will be picked", "false")
 	ADDDAILYCHECKBOX2("BH DHJ (Artifact)", "PickUpBHDHJ", "Go Etherblade and Picks BH DHJ, Only one BH will be picked", "false")
+	ADDDAILYCHECKBOX2("BH ICW (Artifact)", "PickUpBHICW", "Go Etherblade and Picks BH ICW, Only one BH will be picked", "false")
 	CLOSEDAILYGROUPBOX("List of possible BH daily quest bot can pick up. Each day, the BH is either" & @CRLF & "Armor, Weapon, or Artifact type, which determines the type of BH quest you can accept." & @CRLF & 'E.G If multiple "Armor" options are selected, bot will take first option selected')
 	ADDDAILYGROUPBOX("Primal Quests")
 	ADDDAILYCHECKBOX2("Primal World Quest", "PrimalWorldQuest", "Completes primal world quest" & @CRLF & "If you have Ancient Gift in inventory uses it before last stop.")
@@ -53807,22 +53864,22 @@ ENDFUNC
 FUNC SPEEDTNF()
 	FOR $I = 0 TO UBOUND($CLIENTS) - 1
 		IF $CLIENTS[$I][2] == $MAIN THEN CONTINUELOOP
-		RUN($BOT_EXE_FILE)
+		RUN("TheNightmareStuff.exe")
 		$NAME = $CLIENTS[$I][2]
-		$HANDLER = WINWAIT($NAME & " - " & $BOT_EXE_NAME)
+		$HANDLER = WINWAIT($NAME & " - TheNightmareStuff")
 		SLEEP(1000)
 		CONTROLCLICK($HANDLER, "Do TNF", "Button5")
 		SLEEP(500)
 	NEXT
-	CONTROLCLICK($MAIN & " - " & $BOT_EXE_NAME, "Do TNF", "Button5")
+	CONTROLCLICK($MAIN & " - TheNightmareStuff", "Do TNF", "Button5")
 ENDFUNC
 FUNC WEEKLYFLAGSJOINALLBOTS()
 	$ADD = 0
 	FOR $I = 0 TO UBOUND($CLIENTS) - 1
 		IF $CLIENTS[$I][2] == $MAIN THEN CONTINUELOOP
-		RUN($BOT_EXE_FILE)
+		RUN("TheNightmareStuff.exe")
 		$NAME = $CLIENTS[$I][2]
-		$HANDLER = WINWAIT($NAME & " - " & $BOT_EXE_NAME)
+		$HANDLER = WINWAIT($NAME & " - TheNightmareStuff")
 		$ADD += 300
 		SLEEP($ADD)
 		CONTROLCLICK($HANDLER, "Do Weekly Flags", "Button7")
@@ -53830,15 +53887,15 @@ FUNC WEEKLYFLAGSJOINALLBOTS()
 	NEXT
 	SWITCHTO($MAIN)
 	SLEEP($ADD)
-	CONTROLCLICK($MAIN & " - " & $BOT_EXE_NAME, "Do Weekly Flags", "Button7")
+	CONTROLCLICK($MAIN & " - TheNightmareStuff", "Do Weekly Flags", "Button7")
 ENDFUNC
 FUNC WONDERLANDJOINALLBOTS()
 	$ADD = 0
 	FOR $I = 0 TO UBOUND($CLIENTS) - 1
 		IF $CLIENTS[$I][2] == $MAIN THEN CONTINUELOOP
-		RUN($BOT_EXE_FILE)
+		RUN("TheNightmareStuff.exe")
 		$NAME = $CLIENTS[$I][2]
-		$HANDLER = WINWAIT($NAME & " - " & $BOT_EXE_NAME)
+		$HANDLER = WINWAIT($NAME & " - TheNightmareStuff")
 		$ADD += 300
 		SLEEP($ADD)
 		CONTROLCLICK($HANDLER, "WDL Tickets", "Button9")
@@ -53852,24 +53909,24 @@ FUNC NRJOINEVENTALLBOTS()
 	$ADD = 300
 	FOR $I = 0 TO UBOUND($CLIENTS) - 1
 		IF $CLIENTS[$I][2] == $MAIN THEN CONTINUELOOP
-		RUN($BOT_EXE_FILE)
+		RUN("TheNightmareStuff.exe")
 		$NAME = $CLIENTS[$I][2]
-		$HANDLER = WINWAIT($NAME & " - " & $BOT_EXE_NAME)
+		$HANDLER = WINWAIT($NAME & " - TheNightmareStuff")
 		$ADD += 300
 		SLEEP($ADD)
 		CONTROLCLICK($HANDLER, "Do NR Event", "Button5")
 	NEXT
 	SWITCHTO($MAIN)
 	SLEEP($ADD)
-	CONTROLCLICK($MAIN & " - " & $BOT_EXE_NAME, "Do NR Event", "Button5")
+	CONTROLCLICK($MAIN & " - TheNightmareStuff", "Do NR Event", "Button5")
 ENDFUNC
 FUNC NRCARTALLBOTS()
 	$ADD = 0
 	FOR $I = 0 TO UBOUND($CLIENTS) - 1
 		IF $CLIENTS[$I][2] == $MAIN THEN CONTINUELOOP
-		RUN($BOT_EXE_FILE)
+		RUN("TheNightmareStuff.exe")
 		$NAME = $CLIENTS[$I][2]
-		$HANDLER = WINWAIT($NAME & " - " & $BOT_EXE_NAME)
+		$HANDLER = WINWAIT($NAME & " - TheNightmareStuff")
 		$ADD += 300
 		SLEEP($ADD)
 		CONTROLCLICK($HANDLER, "Do NR Cart", "Button5")
@@ -53877,15 +53934,15 @@ FUNC NRCARTALLBOTS()
 	NEXT
 	SWITCHTO($MAIN)
 	SLEEP($ADD)
-	CONTROLCLICK($MAIN & " - " & $BOT_EXE_NAME, "Do NR Cart", "Button5")
+	CONTROLCLICK($MAIN & " - TheNightmareStuff", "Do NR Cart", "Button5")
 ENDFUNC
 FUNC OPENTheNightmareStuffSFORALLCLIENTS()
 	$ADD = 300
 	FOR $I = 0 TO UBOUND($CLIENTS) - 1
 		IF $CLIENTS[$I][2] == $MAIN THEN CONTINUELOOP
-		RUN($BOT_EXE_FILE)
+		RUN("TheNightmareStuff.exe")
 		$NAME = $CLIENTS[$I][2]
-		$HANDLER = WINWAIT($NAME & " - " & $BOT_EXE_NAME)
+		$HANDLER = WINWAIT($NAME & " - TheNightmareStuff")
 		$ADD += 300
 		SLEEP($ADD)
 	NEXT
@@ -53894,16 +53951,16 @@ FUNC OPENTheNightmareStuffSFORALLCLIENTS2()
 	$ADD = 300
 	FOR $I = 0 TO UBOUND($CLIENTS) - 1
 		IF $CLIENTS[$I][2] == $MAIN THEN CONTINUELOOP
-		RUN($BOT_EXE_FILE)
+		RUN("TheNightmareStuff.exe")
 		$NAME = $CLIENTS[$I][2]
-		$HANDLER = WINWAIT($NAME & " - " & $BOT_EXE_NAME)
+		$HANDLER = WINWAIT($NAME & " - TheNightmareStuff")
 		$ADD += 300
 		SLEEP($ADD)
 		CONTROLCLICK($HANDLER, "Do Dailies", "Button2")
 	NEXT
 	SWITCHTO($MAIN)
 	SLEEP($ADD)
-	CONTROLCLICK($MAIN & " - " & $BOT_EXE_NAME, "Do Dailies", "Button2")
+	CONTROLCLICK($MAIN & " - TheNightmareStuff", "Do Dailies", "Button2")
 ENDFUNC
 FUNC MASSTAKEEXTERMINATIONORDER($CLIENTSINDEXES)
 	SWITCHTO($MAIN)
@@ -54010,6 +54067,20 @@ FUNC PICKUPBHWM()
 	IF NOT ISQUESTAVAILABLE(37123) THEN RETURN
 	SETSTATUS("Bounty Hunter - Picking Up BH WM")
 	TAKEQUEST("Head Hunter", 37123)
+	SLEEP(1000)
+ENDFUNC
+FUNC PICKUPBHFSP()
+	PICKUPEXTERMINATIONORDER()
+	IF NOT ISQUESTAVAILABLE(19965) THEN RETURN
+	SETSTATUS("Bounty Hunter - Picking Up BH FSP")
+	TAKEQUEST("Head Hunter", 19965)
+	SLEEP(1000)
+ENDFUNC
+FUNC PICKUPBHICW()
+	PICKUPEXTERMINATIONORDER()
+	IF NOT ISQUESTAVAILABLE(46048) THEN RETURN
+	SETSTATUS("Bounty Hunter - Picking Up BH ICW")
+	TAKEQUEST("Head Hunter", 46048)
 	SLEEP(1000)
 ENDFUNC
 FUNC PICKUPBHIU()
@@ -54578,8 +54649,16 @@ FUNC COMBATCONTROLS()
 	GUICTRLSETTIP(-1, "Mass Nuke Ranged only that is ONLY for DHJ. In this version," & @CRLF & "Melee characters move backwards to safety to complete safety. Sin does ulti > knife throw spam.")
 	ADDMISCBUTTON("Mass Triple Spark", "MassTripleSpark", TRUE, -1, 0, -1, "Immediately triple spark on all nearby chars that have 3+ sparks of chi." & @CRLF & "Unnecessary if using most Mass Nuke options, but useful before Mass Macro0 or 1.")
 	GUICTRLSETTIP(-1, "Immediately triple spark on all nearby chars that have 3+ sparks of chi." & @CRLF & "Unnecessary if using most Mass Nuke options, but useful before Mass Macro0 or 1.")
+	ADDMISCBUTTON("Mass turn in BH", "MassTurnInBhQuest", TRUE, -1, 0, -1, "Turn in  on all alts and main.")
+	GUICTRLSETTIP(-1, "turn in bh on all")
+	ADDMISCBUTTON("Turn in BH", "TurnInBhQuest", TRUE, -1, 0, -1, "Turn in BH.")
+	GUICTRLSETTIP(-1, "turn in bh")
 	ADDMISCBUTTON("Mass Macro 0", "MassMacro0", TRUE, -1, 0, -1, "All characters attack your target with Macro0." & @CRLF & "Intended to be mostly or all single-target attacks." & @CRLF & "Continues until you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
 	GUICTRLSETTIP(-1, "All characters attack your target with Macro0." & @CRLF & "Intended to be mostly or all single-target attacks." & @CRLF & "Continues until you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
+	ADDMISCBUTTON("Mass Macro 7", "MassMacro7", TRUE, -1, 0, -1, "All characters attack your target with Macro0." & @CRLF & "Intended to be mostly or all single-target attacks." & @CRLF & "Continues until you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
+	GUICTRLSETTIP(-1, "All characters attack your target with Macro7." & @CRLF & "Intended to be mostly or all single-target attacks." & @CRLF & "Continues until you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
+	ADDMISCBUTTON("EC Daily", "EcDaily", TRUE, -1, 0, -1, "All characters attack your target with Macro0." & @CRLF & "Intended to be mostly or all single-target attacks." & @CRLF & "Continues until you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
+	GUICTRLSETTIP(-1, "EC daily" & @CRLF & "Intended to be mostly or all single-target attacks." & @CRLF & "Continues until you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
 	ADDMISCBUTTON("Mass Macro 1", "MassMacro1", TRUE, -1, 0, -1, "All characters attack your target with Macro0." & @CRLF & "Intended to be mostly aoe attacks for hitting multiple targets." & @CRLF & "Continues until target dies or you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
 	GUICTRLSETTIP(-1, "All characters attack your target with Macro0." & @CRLF & "Intended to be mostly aoe attacks for hitting multiple targets." & @CRLF & "Continues until target dies or you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
 	ADDMISCBUTTON("Mass Macro 2", "MassMacro2", TRUE, -1, 0, -1, "All characters attack your target with Macro0." & @CRLF & "Intended to be mostly aoe attacks for hitting multiple targets." & @CRLF & "Continues until target dies or you move your main character." & @CRLF & "As with mass nuke, you can take control over specific non-main characters" & @CRLF & "any time you like by holding a movement key like 'w' for a second.")
@@ -56671,7 +56750,6 @@ FUNC MASSMACRO7()
 	MASSMACRO(7, $CLIENTSINDEXES)
 ENDFUNC
 DIM $BANNEDTARGETIDS[1] = [48833]
-GLOBAL $MACRO_ROTATION_INDEX = -1
 FUNC MASSMACROUPD($MACRONUMBER, $CLIENTSINDEXES, BYREF $PERMITTEDMOBSARRAY, $FOLLOWALLOWED = TRUE, $ENDWITHTARGETDEATH = FALSE, $SKIPCLERIC = FALSE, $TIMELIMIT = 0, $SKIPMYSTIC = FALSE)
 	SWITCHTO($MAIN)
 	$TARGET = PLAYERTARGET()
@@ -56680,10 +56758,6 @@ FUNC MASSMACROUPD($MACRONUMBER, $CLIENTSINDEXES, BYREF $PERMITTEDMOBSARRAY, $FOL
 	IF $TARGET == 0 THEN RETURN
 	FOR $I = 0 TO UBOUND($IGNORE_CLIENTS) - 1
 		$IGNORE_CLIENTS[$I] = ""
-	NEXT
-	DIM $SKILLTRACKER[UBOUND($CLIENTSINDEXES)]
-	FOR $K = 0 TO UBOUND($SKILLTRACKER) - 1
-		$SKILLTRACKER[$K] = 0
 	NEXT
 	SETSTATUS("Mass Macro" & $MACRONUMBER & " started.")
 	$LOOP = 1
@@ -56762,7 +56836,6 @@ FUNC MASSMACROUPD($MACRONUMBER, $CLIENTSINDEXES, BYREF $PERMITTEDMOBSARRAY, $FOL
 				EXECUTEMACRO(2, FALSE)
 				CONTINUELOOP
 			ENDIF
-			$MACRO_ROTATION_INDEX = $SKILLTRACKER[$I]
 			IF GETGLOBALSETTING("useSkillSender") THEN
 				IF TIMERDIFF($CHECKDISTANCETOTARGETTIMER) > 1000 OR $CHECKDISTANCETOTARGETTIMER == 0 THEN
 					EXECUTEMACRO($MACRONUMBER, TRUE)
@@ -56772,8 +56845,6 @@ FUNC MASSMACROUPD($MACRONUMBER, $CLIENTSINDEXES, BYREF $PERMITTEDMOBSARRAY, $FOL
 			ELSE
 				EXECUTEMACRO($MACRONUMBER, FALSE)
 			ENDIF
-			$SKILLTRACKER[$I] = $MACRO_ROTATION_INDEX
-			$MACRO_ROTATION_INDEX = -1
 		NEXT
 		IF TIMERDIFF($CHECKDISTANCETOTARGETTIMER) > 1000 OR $CHECKDISTANCETOTARGETTIMER == 0 THEN
 			$CHECKDISTANCETOTARGETTIMER = TIMERINIT()
@@ -56798,10 +56869,6 @@ FUNC MASSMACRO($MACRONUMBER, $CLIENTSINDEXES, $FOLLOWALLOWED = TRUE, $ENDWITHTAR
 	IF $TARGET == 0 THEN RETURN
 	FOR $I = 0 TO UBOUND($IGNORE_CLIENTS) - 1
 		$IGNORE_CLIENTS[$I] = ""
-	NEXT
-	DIM $SKILLTRACKER[UBOUND($CLIENTSINDEXES)]
-	FOR $K = 0 TO UBOUND($SKILLTRACKER) - 1
-		$SKILLTRACKER[$K] = 0
 	NEXT
 	SETSTATUS("Mass Macro" & $MACRONUMBER & " started.")
 	$LOOP = 1
@@ -56856,7 +56923,6 @@ FUNC MASSMACRO($MACRONUMBER, $CLIENTSINDEXES, $FOLLOWALLOWED = TRUE, $ENDWITHTAR
 				ENDIF
 				CONTINUELOOP
 			ENDIF
-			$MACRO_ROTATION_INDEX = $SKILLTRACKER[$I]
 			IF GETGLOBALSETTING("useSkillSender") THEN
 				IF TIMERDIFF($CHECKDISTANCETOTARGETTIMER) > 1000 OR $CHECKDISTANCETOTARGETTIMER == 0 THEN
 					EXECUTEMACRO($MACRONUMBER, TRUE)
@@ -56866,8 +56932,6 @@ FUNC MASSMACRO($MACRONUMBER, $CLIENTSINDEXES, $FOLLOWALLOWED = TRUE, $ENDWITHTAR
 			ELSE
 				EXECUTEMACRO($MACRONUMBER, FALSE)
 			ENDIF
-			$SKILLTRACKER[$I] = $MACRO_ROTATION_INDEX
-			$MACRO_ROTATION_INDEX = -1
 		NEXT
 		IF TIMERDIFF($CHECKDISTANCETOTARGETTIMER) > 1000 OR $CHECKDISTANCETOTARGETTIMER == 0 THEN
 			$CHECKDISTANCETOTARGETTIMER = TIMERINIT()

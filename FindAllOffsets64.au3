@@ -52,12 +52,42 @@ If $moduleBase = 0 Then
 EndIf
 
 If $moduleBase = 0 Then
-	$debugText &= "--- Method 3: Direct test at 0x140000000 ---" & @CRLF
-	Local $testPtr = _ReadQword($hProc, $hK32, 0x140000000 + 0x1A213E8)
-	$debugText &= "Read at 0x140000000+0x1A213E8 = 0x" & Hex($testPtr) & @CRLF
-	If $testPtr <> 0 Then
-		$moduleBase = 0x140000000
-		$debugText &= "SUCCESS: Using 0x140000000" & @CRLF
+	$debugText &= "--- Method 3: VirtualQueryEx scan for MEM_IMAGE ---" & @CRLF
+	$moduleBase = _FindModuleByMemoryScan($hProc, $hK32)
+	$debugText &= "Result: 0x" & Hex($moduleBase) & @CRLF & @CRLF
+EndIf
+
+If $moduleBase = 0 Then
+	$debugText &= "--- Method 4: Brute force common bases ---" & @CRLF
+	Local $tryBases[5] = [0x140000000, 0x7FF600000000, 0x7FF700000000, 0x7FF650000000, 0x00400000]
+	For $t = 0 To 4
+		Local $testPtr = _ReadQword($hProc, $hK32, $tryBases[$t] + 0x1A213E8)
+		$debugText &= "  0x" & Hex($tryBases[$t]) & " + 0x1A213E8 -> 0x" & Hex($testPtr) & @CRLF
+		If $testPtr <> 0 Then
+			$moduleBase = $tryBases[$t]
+			$debugText &= "  SUCCESS!" & @CRLF
+			ExitLoop
+		EndIf
+	Next
+	$debugText &= @CRLF
+EndIf
+
+If $moduleBase = 0 Then
+	; Test if we can read ANYTHING from the process
+	$debugText &= "--- ReadProcessMemory test ---" & @CRLF
+	Local $testBuf = DllStructCreate("byte[8]")
+	Local $bytesRead = DllStructCreate("ulong_ptr")
+	Local $rpmResult = DllCall($hK32, "bool", "ReadProcessMemory", "handle", $hProc, _
+		"ptr", 0x140000000, "ptr", DllStructGetPtr($testBuf), "ulong_ptr", 8, "ptr", DllStructGetPtr($bytesRead))
+	If @error Then
+		$debugText &= "  DllCall @error=" & @error & @CRLF
+	Else
+		$debugText &= "  ReadProcessMemory returned: " & $rpmResult[0] & @CRLF
+		$debugText &= "  Bytes read: " & DllStructGetData($bytesRead, 1) & @CRLF
+		If $rpmResult[0] = 0 Then
+			Local $rpmErr = DllCall("kernel32.dll", "dword", "GetLastError")
+			$debugText &= "  GetLastError: " & $rpmErr[0] & @CRLF
+		EndIf
 	EndIf
 	$debugText &= @CRLF
 EndIf
@@ -649,49 +679,107 @@ Func _BytesToFloat($bytes, $iOff)
 EndFunc
 
 Func _GetModuleBase64($hProc, $hK32, $moduleName)
-	Local $hPsapi2 = DllOpen("psapi.dll")
-	If $hPsapi2 = -1 Then
-		MsgBox(16, "Debug", "Failed to open psapi.dll")
-		Return 0
-	EndIf
 	Local $modArray2 = DllStructCreate("ptr[1024]")
 	Local $cbNeeded2 = DllStructCreate("dword")
-	Local $enumResult = DllCall($hPsapi2, "bool", "EnumProcessModulesEx", _
+
+	; Try K32EnumProcessModulesEx from kernel32 first (Win7+), then psapi
+	Local $enumResult = DllCall("kernel32.dll", "bool", "K32EnumProcessModulesEx", _
 		"handle", $hProc, "ptr", DllStructGetPtr($modArray2), _
 		"dword", DllStructGetSize($modArray2), "ptr", DllStructGetPtr($cbNeeded2), "dword", 0x03)
-	If @error Then
-		MsgBox(16, "Debug", "EnumProcessModulesEx DllCall @error=" & @error)
-		DllClose($hPsapi2)
-		Return 0
+
+	If @error Or $enumResult[0] = 0 Then
+		; Retry with just EnumProcessModules (no Ex, no filter flag)
+		$enumResult = DllCall("kernel32.dll", "bool", "K32EnumProcessModules", _
+			"handle", $hProc, "ptr", DllStructGetPtr($modArray2), _
+			"dword", DllStructGetSize($modArray2), "ptr", DllStructGetPtr($cbNeeded2))
 	EndIf
-	If $enumResult[0] = 0 Then
-		Local $lastErr2 = DllCall("kernel32.dll", "dword", "GetLastError")
-		MsgBox(16, "Debug", "EnumProcessModulesEx returned False. GetLastError=" & $lastErr2[0])
-		DllClose($hPsapi2)
-		Return 0
+
+	If @error Or $enumResult[0] = 0 Then
+		; Try psapi.dll as last resort
+		Local $hPsapi2 = DllOpen("psapi.dll")
+		If $hPsapi2 <> -1 Then
+			$enumResult = DllCall($hPsapi2, "bool", "EnumProcessModules", _
+				"handle", $hProc, "ptr", DllStructGetPtr($modArray2), _
+				"dword", DllStructGetSize($modArray2), "ptr", DllStructGetPtr($cbNeeded2))
+			DllClose($hPsapi2)
+		EndIf
 	EndIf
+
+	If @error Or Not IsArray($enumResult) Or $enumResult[0] = 0 Then Return 0
+
 	Local $cbVal = DllStructGetData($cbNeeded2, 1)
 	Local $ptrSize = DllStructGetSize(DllStructCreate("ptr"))
-	Local $numMod2 = $cbVal / $ptrSize
+	Local $numMod2 = Int($cbVal / $ptrSize)
 	If $numMod2 > 1024 Then $numMod2 = 1024
+	If $numMod2 = 0 Then Return 0
 
-	Local $moduleNames = "Modules found (" & $numMod2 & "):" & @CRLF
 	For $i = 1 To $numMod2
 		Local $hMod2 = DllStructGetData($modArray2, 1, $i)
 		Local $nameBuf2 = DllStructCreate("wchar[260]")
-		DllCall($hPsapi2, "dword", "GetModuleBaseNameW", _
+		DllCall("kernel32.dll", "dword", "K32GetModuleBaseNameW", _
 			"handle", $hProc, "handle", $hMod2, _
 			"ptr", DllStructGetPtr($nameBuf2), "dword", 260)
-		Local $modName = DllStructGetData($nameBuf2, 1)
-		If $i <= 10 Then $moduleNames &= "  " & $i & ": " & $modName & " (0x" & Hex($hMod2) & ")" & @CRLF
-		If StringInStr($modName, $moduleName) Then
-			MsgBox(64, "Debug", "Found module '" & $modName & "' at 0x" & Hex($hMod2))
-			DllClose($hPsapi2)
-			Return $hMod2
+		If @error Then
+			DllCall("psapi.dll", "dword", "GetModuleBaseNameW", _
+				"handle", $hProc, "handle", $hMod2, _
+				"ptr", DllStructGetPtr($nameBuf2), "dword", 260)
 		EndIf
+		If StringInStr(DllStructGetData($nameBuf2, 1), $moduleName) Then Return $hMod2
 	Next
-	MsgBox(16, "Debug", $moduleNames & @CRLF & "Did NOT find '" & $moduleName & "' in list!")
-	DllClose($hPsapi2)
+	Return 0
+EndFunc
+
+Func _FindModuleByMemoryScan($hProc, $hK32)
+	; Scan process memory for MEM_IMAGE regions to find the main exe module
+	Local $addr = 0
+	Local $mbi = DllStructCreate("ptr BaseAddress; ptr AllocationBase; dword AllocationProtect; " & _
+		"ptr RegionSize; dword State; dword Protect; dword Type")
+	Local $mbiSize = DllStructGetSize($mbi)
+	Local $foundBases = ""
+	Local $count = 0
+
+	While $count < 5000
+		Local $ret = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $hProc, "ptr", $addr, _
+			"ptr", DllStructGetPtr($mbi), "ulong_ptr", $mbiSize)
+		If @error Or $ret[0] = 0 Then ExitLoop
+
+		Local $rBase = DllStructGetData($mbi, "BaseAddress")
+		Local $rSize = DllStructGetData($mbi, "RegionSize")
+		Local $rState = DllStructGetData($mbi, "State")
+		Local $rType = DllStructGetData($mbi, "Type")
+		Local $rProtect = DllStructGetData($mbi, "Protect")
+
+		; MEM_COMMIT=0x1000, MEM_IMAGE=0x1000000, PAGE_EXECUTE_READ=0x20
+		If $rState = 0x1000 And $rType = 0x1000000 And BitAND($rProtect, 0x20) Then
+			; This is an executable image region - likely module code
+			; Check if it's the start of a PE (MZ header)
+			Local $mzCheck = _ReadQword($hProc, $hK32, $rBase)
+			Local $mzSig = BitAND($mzCheck, 0xFFFF)
+			If $mzSig = 0x5A4D Then ; "MZ"
+				; Verify it's our module by checking ADDRESS_BASE offset
+				Local $testVal = _ReadQword($hProc, $hK32, $rBase + 0x1A213E8)
+				$foundBases &= "  MZ at 0x" & Hex($rBase) & " (size 0x" & Hex($rSize) & ")"
+				If $testVal <> 0 Then
+					$foundBases &= " << ADDRESS_BASE valid!"
+					Global $debugText
+					$debugText &= "  Found MZ headers with valid ADDRESS_BASE at 0x" & Hex($rBase) & @CRLF
+					Return $rBase
+				EndIf
+				$foundBases &= @CRLF
+			EndIf
+		EndIf
+
+		$addr = $rBase + $rSize
+		If $addr = 0 Then ExitLoop
+		$count += 1
+	WEnd
+
+	Global $debugText
+	If $foundBases <> "" Then
+		$debugText &= "  MZ headers found:" & @CRLF & $foundBases
+	Else
+		$debugText &= "  No MZ image regions found (scanned " & $count & " regions)" & @CRLF
+	EndIf
 	Return 0
 EndFunc
 

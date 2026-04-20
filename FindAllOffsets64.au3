@@ -15,29 +15,64 @@ EndIf
 ; Enable SeDebugPrivilege so we can open the game process
 _EnableDebugPrivilege()
 
-Local $PID = ProcessExists("elementclient_64.exe")
-If $PID = 0 Then
+Local $hK32 = DllOpen("kernel32.dll")
+
+; Find ALL elementclient_64.exe processes and try each one
+Local $procList = ProcessList("elementclient_64.exe")
+If $procList[0][0] = 0 Then
 	MsgBox(16, "Error", "elementclient_64.exe is not running!" & @CRLF & "Log into a character first.")
 	Exit
 EndIf
 
-Local $hK32 = DllOpen("kernel32.dll")
-Local $aOpen = DllCall($hK32, "handle", "OpenProcess", "dword", 0x1F0FFF, "bool", 0, "dword", $PID)
-If @error Or $aOpen[0] = 0 Then
-	MsgBox(16, "Error", "Cannot open game process (PID " & $PID & ")." & @CRLF & @CRLF & _
-		"Try one of these:" & @CRLF & _
-		"1. Right-click AutoIt3_x64.exe -> Run as Administrator" & @CRLF & _
-		"2. Or right-click this .au3 -> Run Script (x64) as Admin")
+Local $PID = 0
+Local $hProc = 0
+
+; Try each PID until we find one we can actually read memory from
+For $pi = 1 To $procList[0][0]
+	Local $tryPID = $procList[$pi][1]
+	Local $tryOpen = DllCall($hK32, "handle", "OpenProcess", "dword", 0x1F0FFF, "bool", 0, "dword", $tryPID)
+	If @error Or $tryOpen[0] = 0 Then ContinueLoop
+
+	; Test if we can read memory from this process
+	Local $testBuf2 = DllStructCreate("uint64")
+	Local $testRead2 = DllCall($hK32, "bool", "ReadProcessMemory", "handle", $tryOpen[0], _
+		"ptr", 0x140000000, "ptr", DllStructGetPtr($testBuf2), "ulong_ptr", 8, "ulong_ptr*", 0)
+
+	If Not @error And $testRead2[0] <> 0 Then
+		$PID = $tryPID
+		$hProc = $tryOpen[0]
+		ExitLoop
+	Else
+		; Can't read 0x140000000, try reading the PE header area with VirtualQueryEx
+		Local $testMbi = DllStructCreate("ptr BaseAddress; ptr AllocationBase; dword AllocationProtect; " & _
+			"ptr RegionSize; dword State; dword Protect; dword Type")
+		Local $vqResult = DllCall($hK32, "ulong_ptr", "VirtualQueryEx", "handle", $tryOpen[0], "ptr", 0x140000000, _
+			"ptr", DllStructGetPtr($testMbi), "ulong_ptr", DllStructGetSize($testMbi))
+		If Not @error And $vqResult[0] > 0 And DllStructGetData($testMbi, "State") = 0x1000 Then
+			$PID = $tryPID
+			$hProc = $tryOpen[0]
+			ExitLoop
+		EndIf
+		DllCall($hK32, "bool", "CloseHandle", "handle", $tryOpen[0])
+	EndIf
+Next
+
+If $hProc = 0 Then
+	MsgBox(16, "Error", "Found " & $procList[0][0] & " elementclient_64.exe process(es) but cannot read memory from any." & @CRLF & @CRLF & _
+		"Try running as Administrator.")
 	Exit
 EndIf
-Local $hProc = $aOpen[0]
 
 ; Write debug log to file so we can see what happens
 Global $debugLog = @ScriptDir & "\FindAllOffsets64_Debug.txt"
 Global $debugText = "=== DEBUG LOG ===" & @CRLF
 $debugText &= "AutoIt x64: " & @AutoItX64 & @CRLF
 $debugText &= "Admin: " & IsAdmin() & @CRLF
-$debugText &= "PID: " & $PID & @CRLF
+$debugText &= "Total elementclient_64.exe processes: " & $procList[0][0] & @CRLF
+For $di = 1 To $procList[0][0]
+	$debugText &= "  PID " & $procList[$di][1] & ": " & $procList[$di][0] & @CRLF
+Next
+$debugText &= "Selected PID: " & $PID & @CRLF
 $debugText &= "Process handle: " & $hProc & @CRLF
 $debugText &= @CRLF
 

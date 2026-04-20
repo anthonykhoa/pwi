@@ -2,6 +2,7 @@
 #Region ;**** Directives created by AutoIt3Wrapper_GUI ****
 #AutoIt3Wrapper_Icon=icon.ico
 #AutoIt3Wrapper_Outfile=TheGoodStuff.exe
+#AutoIt3Wrapper_UseX64=y
 #AutoIt3Wrapper_UseUpx=y
 #AutoIt3Wrapper_Res_Comment=Botting software for PWI
 #AutoIt3Wrapper_Res_Description=TheNightmareStuff
@@ -24769,7 +24770,7 @@
 		ENDIF
 	ENDFUNC
 #EndRegion AutoIT Under-the-Hood Stuff
-Global $ADDRESS_BASE = 0x141A213E8
+Global $ADDRESS_BASE = 0
 Global $ADDRESS_SENDPACKET = 14737984
 Global $ADDRESS_POSTMESSAGE = 11167168
 Global $ADDRESS_ACTION1 = 12347264
@@ -26101,12 +26102,51 @@ GLOBAL $KERNEL32
 		ENDIF
 	ENDFUNC
 #EndRegion _Memory
+
+If @AutoItX64 = 0 Then
+	MsgBox(16, "64-bit Required", "This script must be run with 64-bit AutoIt (AutoIt3_x64.exe)." & @CRLF & @CRLF & _
+		"32-bit AutoIt cannot read 64-bit game memory addresses." & @CRLF & _
+		"Right-click the .au3 file -> Run Script (x64)")
+	Exit
+EndIf
+
+Func _GetGameModuleBase($hProc, $sModuleName)
+	Local $hPsapi = DllOpen("psapi.dll")
+	If $hPsapi = -1 Then Return 0
+	Local $modArray = DllStructCreate("ptr[1024]")
+	Local $cbNeeded = DllStructCreate("dword")
+	DllCall($hPsapi, "bool", "EnumProcessModulesEx", _
+		"handle", $hProc, "ptr", DllStructGetPtr($modArray), _
+		"dword", DllStructGetSize($modArray), "ptr", DllStructGetPtr($cbNeeded), "dword", 0x03)
+	If @error Then
+		DllClose($hPsapi)
+		Return 0
+	EndIf
+	Local $numMod = DllStructGetData($cbNeeded, 1) / DllStructGetSize(DllStructCreate("ptr"))
+	If $numMod > 1024 Then $numMod = 1024
+	For $i = 1 To $numMod
+		Local $hMod = DllStructGetData($modArray, 1, $i)
+		Local $nameBuf = DllStructCreate("wchar[260]")
+		DllCall($hPsapi, "dword", "GetModuleBaseNameW", _
+			"handle", $hProc, "handle", $hMod, _
+			"ptr", DllStructGetPtr($nameBuf), "dword", 260)
+		If StringInStr(DllStructGetData($nameBuf, 1), $sModuleName) Then
+			DllClose($hPsapi)
+			Return $hMod
+		EndIf
+	Next
+	DllClose($hPsapi)
+	Return 0
+EndFunc
+
+Global Const $ADDRESS_BASE_OFFSET = 0x1A213E8
+
 GLOBAL $KERNEL32 = DLLOPEN("kernel32.dll")
 DIM $GAME_EXE = "elementclient_64.exe"
 DIM $GAME_PID = PROCESSEXISTS($GAME_EXE)
 DIM $GAME_PROCESS = _MEMORYOPEN($GAME_PID)
 DIM $CURRENT_CLIENT = 0
-DIM $CLIENTS[0][6]
+DIM $CLIENTS[0][7]
 FUNC WAITTOFINISH($DELAY = 200)
 	WHILE ACTIONFLAG()
 		SLEEP($DELAY)
@@ -28783,12 +28823,16 @@ FUNC SETCLIENTSDATA($RENAME = 1)
 	$LIST = PROCESSLIST("elementclient_64.exe")
 	PRINT("Num Clients Found: " & $LIST[0][0])
 	IF $LIST[0][0] > 0 THEN
-		REDIM $CLIENTS[$LIST[0][0]][6]
+		REDIM $CLIENTS[$LIST[0][0]][7]
 		$CURR = 0
 		FOR $I = 0 TO $LIST[0][0] - 1
 			$PID = $LIST[$I + 1][1]
 			$OPENMEM = _MEMORYOPEN($PID)
-			$PLAYER = _MEMORYREAD(_MEMORYREAD(_MEMORYREAD($ADDRESS_BASE, $OPENMEM, "ptr") + 0x38, $OPENMEM, "ptr") + $PLAYER_OFFSET, $OPENMEM, "ptr")
+			Local $hProcHandle = $OPENMEM[1]
+			Local $clientModBase = _GetGameModuleBase($hProcHandle, "elementclient_64.exe")
+			Local $clientAddrBase = $clientModBase + $ADDRESS_BASE_OFFSET
+			PRINT("Client PID " & $PID & " ModuleBase: 0x" & Hex($clientModBase) & " ADDRESS_BASE: 0x" & Hex($clientAddrBase))
+			$PLAYER = _MEMORYREAD(_MEMORYREAD(_MEMORYREAD($clientAddrBase, $OPENMEM, "ptr") + 0x38, $OPENMEM, "ptr") + $PLAYER_OFFSET, $OPENMEM, "ptr")
 			$NAME = _MEMORYREAD(_MEMORYREAD($PLAYER + $PLAYERNAME_OFFSET, $OPENMEM, "ptr"), $OPENMEM, "wchar[100]")
 			PRINT("$player " & HEX($PLAYER) & " Name: " & $NAME)
 			IF STRINGLEN($NAME) > 0 THEN
@@ -28798,11 +28842,12 @@ FUNC SETCLIENTSDATA($RENAME = 1)
 				$CLIENTS[$CURR][3] = _MEMORYREAD($PLAYER + $PLAYERIDOFFSET, $OPENMEM)
 				$CLIENTS[$CURR][4] = 0
 				$CLIENTS[$CURR][5] = 0
+				$CLIENTS[$CURR][6] = $clientAddrBase
 				CONSOLEWRITE("Found " & $CLIENTS[$CURR][2] & ", " & _HEX($CLIENTS[$CURR][3]) & ", " & $CLIENTS[$CURR][3] & ", " & $CLIENTS[$CURR][0] & @CRLF)
 				$CURR = $CURR + 1
 			ENDIF
 		NEXT
-		REDIM $CLIENTS[$CURR][6]
+		REDIM $CLIENTS[$CURR][7]
 		IF $RENAME AND GETGLOBALSETTING("renamewindows", TRUE) THEN
 			$WLIST = WINLIST("[CLASS:ElementClient Window]")
 			FOR $I = 1 TO $WLIST[0][0]
@@ -28828,6 +28873,7 @@ FUNC SETCLIENTSDATA($RENAME = 1)
 			REFRESHCLIENTS()
 		ENDIF
 	ELSE
+		$ADDRESS_BASE = $CLIENTS[0][6]
 		APPLYPATCHESFORALL()
 		$MAIN = $CLIENTS[0][2]
 		SWITCHTO($CLIENTS[0][2])
@@ -28845,6 +28891,7 @@ FUNC SWITCHTO($NAME)
 	PRINT("Switching to: " & $N)
 	$GAME_PROCESS = $CLIENTS[$N][1]
 	$GAME_PID = $CLIENTS[$N][0]
+	$ADDRESS_BASE = $CLIENTS[$N][6]
 	$CURRENT_CLIENT = $N
 ENDFUNC
 FUNC SWITCHTONUM($N)
@@ -28852,6 +28899,7 @@ FUNC SWITCHTONUM($N)
 	PRINT("Switching to: " & $N)
 	$GAME_PROCESS = $CLIENTS[$N][1]
 	$GAME_PID = $CLIENTS[$N][0]
+	$ADDRESS_BASE = $CLIENTS[$N][6]
 	$CURRENT_CLIENT = $N
 ENDFUNC
 FUNC SQUADIDNUM($NUM)

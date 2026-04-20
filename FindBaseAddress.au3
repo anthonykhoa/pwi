@@ -1,5 +1,7 @@
 #RequireAdmin
 #include <Array.au3>
+#include <GUIConstantsEx.au3>
+#include <StaticConstants.au3>
 
 ; ============================================
 ; PWI 64-bit Base Address Finder
@@ -49,8 +51,20 @@ If $charName = "" Then
     Exit
 EndIf
 
+; Create progress window
+Global $hProgressGUI = GUICreate("Scanning...", 400, 120, -1, -1)
+Global $hProgressLabel = GUICtrlCreateLabel("Starting scan... Please wait.", 20, 20, 360, 30)
+Global $hProgressDetail = GUICtrlCreateLabel("", 20, 60, 360, 40)
+GUISetState(@SW_SHOW, $hProgressGUI)
+
+Func _UpdateProgress($msg, $detail = "")
+    GUICtrlSetData($hProgressLabel, $msg)
+    GUICtrlSetData($hProgressDetail, $detail)
+EndFunc
+
 ; Step 5: Try the known 32-bit ADDRESS_BASE first (unlikely to work but fast check)
 Local $oldBase = 22982616
+_UpdateProgress("Step 1: Checking if old address works...")
 ConsoleWrite("Trying old 32-bit ADDRESS_BASE (0x" & Hex($oldBase) & ")..." & @CRLF)
 Local $testName = _TryReadName($hProcess, $hKernel32, $oldBase)
 If $testName = $charName Then
@@ -61,6 +75,7 @@ If $testName = $charName Then
 EndIf
 
 ; Step 6: Scan memory for the character name (UTF-16)
+_UpdateProgress("Step 2: Scanning memory for '" & $charName & "'...", "This may take 1-3 minutes. Do not close this window.")
 ConsoleWrite("Scanning memory for character name: " & $charName & @CRLF)
 Local $nameBytes = StringToBinary($charName, 2) ; UTF-16 LE
 Local $nameHex = StringTrimLeft(String($nameBytes), 2) ; Remove "0x" prefix
@@ -76,6 +91,7 @@ If UBound($foundAddresses) = 0 Then
 EndIf
 
 ConsoleWrite("Found " & UBound($foundAddresses) & " matches for character name in memory." & @CRLF)
+_UpdateProgress("Step 3: Found " & UBound($foundAddresses) & " name matches. Tracing pointers...", "This may take 1-5 minutes. Do not close this window.")
 
 ; Step 7: For each name address, work backwards through pointer chain
 ; Name is at: [[[BASE] + 0x1C] + 0x34] + 0xB90 -> pointer to name string
@@ -171,12 +187,14 @@ For $i = 0 To UBound($foundAddresses) - 1
 Next
 
 ; Step 8: Show results
+GUIDelete($hProgressGUI)
 If $resultCount > 0 Then
     MsgBox(64, "SUCCESS! Found " & $resultCount & " result(s)", "Results:" & @CRLF & @CRLF & $results & @CRLF & "Copy the ADDRESS_BASE value and give it to Claude!")
     ClipPut($results)
     MsgBox(64, "Copied!", "Results have been copied to your clipboard.")
 Else
     ; Fallback: just report found name addresses and try common base patterns
+    _UpdateProgress("Step 4: Pointer chain scan didn't find it. Trying brute force...", "This may take a few more minutes.")
     ConsoleWrite("Full chain scan failed. Trying brute force on module..." & @CRLF)
 
     Local $bruteResults = ""
@@ -214,7 +232,9 @@ Else
 
         ; Progress every 4MB
         If Mod($offset, 0x400000) = 0 Then
-            ConsoleWrite("Scanning module... " & Round($offset / $scanSize * 100) & "%" & @CRLF)
+            Local $pct = Round($offset / $scanSize * 100)
+            _UpdateProgress("Step 4: Brute force scanning... " & $pct & "%", "Scanning module memory. Please wait.")
+            ConsoleWrite("Scanning module... " & $pct & "%" & @CRLF)
         EndIf
     Next
 
